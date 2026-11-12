@@ -320,6 +320,18 @@ table.plan-table td{padding:10px;border-bottom:1px solid var(--paper-2);vertical
 .nb-row small{margin-left:auto;color:var(--ink-soft);font-size:.72rem;}
 .chk-all{display:flex;gap:8px;align-items:center;font-weight:600;font-size:.88rem;margin:8px 0;}
 .nb-row input,.chk-all input{width:18px;height:18px;flex-shrink:0;}
+.forvo-btn{display:inline-block;font-size:.72rem;font-weight:700;text-decoration:none;color:var(--river);border:1.5px solid var(--river-light);border-radius:14px;padding:2px 9px;margin-left:6px;vertical-align:middle;white-space:nowrap;}
+.wotd .forvo-btn{color:#0A3D3A;border-color:rgba(10,61,58,.4);}
+.obj-list{display:flex;flex-direction:column;}
+.obj-row{display:flex;gap:11px;align-items:flex-start;padding:9px 4px;border-bottom:1px solid var(--paper-2);font-size:.92rem;line-height:1.4;cursor:pointer;}
+.obj-row:last-child{border-bottom:none;}
+.obj-row input{width:19px;height:19px;flex-shrink:0;margin-top:1px;accent-color:var(--river);}
+.obj-row.on span{color:var(--ink-soft);text-decoration:line-through;}
+.unit-item.obj-item{border-left-color:var(--turmeric);}
+.obj-body{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0;}
+.obj-refs{display:flex;gap:5px;flex-wrap:wrap;}
+.obju{border:1.5px solid var(--river-light);background:var(--card);color:var(--river);border-radius:13px;padding:2px 9px;font-family:inherit;font-size:.72rem;font-weight:700;cursor:pointer;white-space:nowrap;}
+.obj-row.on .obju{opacity:.55;}
 
 
 html[data-theme="dark"]{--paper:#141F1B;--paper-2:#26342E;--river:#36978B;--river-light:#4C9E94;--ink:#E9E5D6;--ink-soft:#A8B5AE;--card:#1C2A25;--ok-bg:#1F3A2A;--bad-bg:#3E2323;--head:#CDE9E3;--turmeric:#E0A526;--clay:#E08A6A;color-scheme:dark;}
@@ -3672,29 +3684,96 @@ units.push(
 }
 );
 
-/* ===== Unités de vocabulaire thématiques (exercices générés automatiquement) ===== */
-function autoEx(vocab){
+/* ===== Unités de vocabulaire thématiques — générateur d'exercices ===== */
+function autoEx(vocab,dialogue,seed){
   const clean=s=>String(s).replace(/\s*\(.*?\)/g,'').trim();
   const shortFr=s=>{const t=clean(s); return t.length>46? t.slice(0,44)+'…' : t;};
+  const head=v=>String(v.vn).split(/\s*\/\s*/)[0].trim();
+  const bare=s=>String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/đ/g,'d');
+  const esc2=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const wordRe=w=>{ try{ return new RegExp('(^|[^\\p{L}])('+esc2(w)+')(?=$|[^\\p{L}])','iu'); }catch(e){ return null; } };
   const n=vocab.length, mcq=[], listen=[], fill=[];
+  let _s=((seed||1)*7919+13)%233280;
+  const rnd=()=>{ _s=(_s*9301+49297)%233280; return _s/233280; };
+
+  /* distracteurs : on écarte les sens identiques ; « sim » privilégie les mots qui se ressemblent à l'oreille */
+  const others=(k,count,sim)=>{
+    const a=head(vocab[k]), fa=clean(vocab[k].fr);
+    let cand=vocab.map((v,i)=>i).filter(i=>i!==k && clean(vocab[i].fr)!==fa && head(vocab[i])!==a);
+    if(sim){
+      const ba=bare(a), sc=i=>{ const b=bare(head(vocab[i])); let s=0;
+        if(b[0]===ba[0]) s+=3;
+        if(b.split(/\s+/).length===ba.split(/\s+/).length) s+=2;
+        if(Math.abs(b.length-ba.length)<=1) s+=2;
+        if(b.slice(-1)===ba.slice(-1)) s+=1;
+        if(b.replace(/\s/g,'').slice(-2)===ba.replace(/\s/g,'').slice(-2)) s+=1;
+        return s; };
+      cand.sort((x,y)=>sc(y)-sc(x));
+    } else {
+      cand=cand.map(i=>[i,rnd()]).sort((x,y)=>x[1]-y[1]).map(x=>x[0]);
+    }
+    return cand.slice(0,count);
+  };
+  const build=(good,bad)=>{ const pos=Math.floor(rnd()*(bad.length+1)); const o=bad.slice(); o.splice(pos,0,good); return {options:o,a:pos}; };
+
+  /* phrases de dialogue réutilisables : (mot du lexique, réplique qui le contient) */
+  const lines=[];
+  (dialogue||[]).forEach(d=>{ if(!d||!d.vn||d.vn.length>110) return;
+    vocab.forEach((v,i)=>{ const w=head(v); if(w.length<2) return; const re=wordRe(w);
+      if(!re || !re.test(d.vn)) return;
+      let occ=0; try{ occ=(d.vn.match(new RegExp('(^|[^\\p{L}])('+esc2(w)+')(?=$|[^\\p{L}])','giu'))||[]).length; }catch(e){ occ=1; }
+      if(occ!==1) return;
+      lines.push({i,w,vn:d.vn,fr:d.fr}); }); });
+  const usedLine={}, takeLine=()=>{ for(const L of lines){ if(!usedLine[L.i] && !usedLine['w'+L.w]){ usedLine[L.i]=1; usedLine['w'+L.w]=1; return L; } } return null; };
+
+  /* --- QCM : sens, production, et compréhension en contexte --- */
   const step=Math.max(1,Math.floor(n/5));
   for(let i=0;i<5;i++){
-    const k=(i*step+1)%n; const v=vocab[k];
-    const d1=vocab[(k+3)%n], d2=vocab[(k+7)%n];
-    const opts=[shortFr(d1.fr),shortFr(d2.fr)]; const pos=i%3; opts.splice(pos,0,shortFr(v.fr));
-    mcq.push({q:'« '+v.vn+' » signifie :',options:opts,a:pos});
+    const k=(i*step+1)%n, v=vocab[k], d=others(k,2,false);
+    if(i%3===2){
+      const L=takeLine();
+      if(L){ const w=L.w, dd=others(L.i,2,false);
+        const b=build(shortFr(vocab[L.i].fr),dd.map(j=>shortFr(vocab[j].fr)));
+        mcq.push({q:'Dans « '+L.vn+' », que veut dire « '+w+' » ?',options:b.options,a:b.a});
+        continue; }
+    }
+    if(i%3===1){
+      const b=build(head(v),d.map(j=>head(vocab[j])));
+      mcq.push({q:'Comment dit-on « '+shortFr(v.fr)+' » ?',options:b.options,a:b.a});
+    } else {
+      const b=build(shortFr(v.fr),d.map(j=>shortFr(vocab[j].fr)));
+      mcq.push({q:'« '+v.vn+' » signifie :',options:b.options,a:b.a});
+    }
   }
+
+  /* --- Écoute : 2 discriminations de mots proches, 2 compréhensions de sens --- */
+  for(let i=0;i<4;i++){
+    const k=(i*step+2)%n, v=vocab[k];
+    if(i<2){
+      const d=others(k,2,true);
+      if(d.length>=2){ const b=build(head(v),d.map(j=>head(vocab[j])));
+        listen.push({word:head(v),q:'Quel mot entends-tu ?',options:b.options,a:b.a}); continue; }
+    }
+    const d=others(k,2,false); const b=build(shortFr(v.fr),d.map(j=>shortFr(vocab[j].fr)));
+    listen.push({word:head(v),q:'Que signifie le mot que tu entends ?',options:b.options,a:b.a});
+  }
+
+  /* --- Textes à trous : d'abord de vraies répliques du dialogue --- */
+  const mk=(a,extra)=>({answer:a,hint:a.charAt(0)+'… ('+a.split(/\s+/).length+' mot'+(a.split(/\s+/).length>1?'s':'')+')',sentence:extra});
   for(let i=0;i<3;i++){
-    const k=(i*step+2)%n; const v=vocab[k];
-    const d1=vocab[(k+4)%n], d2=vocab[(k+9)%n];
-    const opts=[shortFr(d1.fr),shortFr(d2.fr)]; const pos=(i+1)%3; opts.splice(pos,0,shortFr(v.fr));
-    listen.push({word:v.vn.split(' / ')[0],options:opts,a:pos});
+    const L=takeLine(); if(!L) break;
+    const re=wordRe(L.w); if(!re) break;
+    const blanked=L.vn.replace(re,(m,p)=>p+'___');
+    if(blanked===L.vn) continue;
+    const f=mk(L.w,blanked+'<div class="mini">'+L.fr+'</div>');
+    fill.push({sentence:f.sentence,answer:f.answer,hint:f.hint});
   }
-  const fillPool=vocab.filter(v=>v.vn.split(/\s*\/\s*/)[0].trim().split(/\s+/).length<=2);
-  for(let i=0;i<4 && fillPool.length;i++){
-    const v=fillPool[(i*3+1)%fillPool.length];
-    const a=v.vn.split(/\s*\/\s*/)[0].trim();
-    fill.push({sentence:'« '+shortFr(v.fr)+' » se dit en vietnamien : ___',answer:a,hint:a.charAt(0)+'… ('+a.split(/\s+/).length+' mot'+(a.split(/\s+/).length>1?'s':'')+')'});
+  const pool=vocab.map((v,i)=>i).filter(i=>head(vocab[i]).split(/\s+/).length<=2 && !usedLine['w'+head(vocab[i])]);
+  for(let i=0;fill.length<4 && i<pool.length;i++){
+    const v=vocab[pool[(i*3+1)%pool.length]], a=head(v);
+    if(fill.some(f=>f.answer===a)) continue;
+    const f=mk(a,'« '+shortFr(v.fr)+' » se dit en vietnamien : ___');
+    fill.push({sentence:f.sentence,answer:f.answer,hint:f.hint});
   }
   return {mcq,listen,fill};
 }
@@ -3703,7 +3782,7 @@ const V=(id,level,title,sub,intro,tip,rows,dialogue)=>{
   const notes=vocab.filter(v=>v.note).slice(0,6).map(v=>`<li><b>${v.vn}</b> — ${v.note}</li>`).join('');
   units.push({id,level,vocabUnit:true,title,sub,intro,vocab,
     grammar:`<p>${tip}</p>${notes?'<p><b>À retenir :</b></p><ul>'+notes+'</ul>':''}<div class="callout">Méthode : lis la liste à voix haute en cliquant sur 🔊, puis passe aux exercices. Ajoute ensuite ces mots à tes <b>cartes mémoire</b> (menu à gauche) pour les retenir durablement.</div>`,
-    dialogue,ex:autoEx(vocab)});
+    dialogue,ex:autoEx(vocab,dialogue,id)});
 };
 
 V(67,1,"Ẩm thực miền Nam","Plats, boissons et condiments typiques de Sài Gòn et du Delta",
@@ -3897,6 +3976,446 @@ V(90,7,"Sắc thái động từ & từ đồng nghĩa","Nuancer le sens : voir,
   {sp:"B",vn:"Con đừng càu nhàu, ngắm hoa ngoài sân đi, đẹp lắm.",fr:"Ne grommelle pas, contemple les fleurs dans la cour, elles sont très belles."},
   {sp:"A",vn:"Dạ, con mỉm cười thôi, chứ đâu có than phiền.",fr:"Oui, je ne fais que sourire, je ne me plains pas du tout."}]);
 
+/* ===== Unités ajoutées pour compléter les objectifs A1/A2 et les niveaux supérieurs ===== */
+const G=(id,level,ord,title,sub,intro,rows,grammar,dialogue,ex)=>{
+  units.push({id,level,ord,title,sub,intro,
+    vocab:rows.map(r=>({vn:r[0],ipa:"",fr:r[1],note:r[2]||""})),
+    grammar,dialogue,
+    ex:{mcq:ex.mcq.map(m=>({q:m[0],options:m[1],a:m[2]})),
+        listen:ex.listen.map(m=>({word:m[0],options:m[1],a:m[2]})),
+        fill:ex.fill.map(f=>({sentence:f[0],answer:f[1],hint:f[2]}))}});
+};
+const VO=(id,level,ord,title,sub,intro,tip,rows,dialogue)=>{ V(id,level,title,sub,intro,tip,rows,dialogue); units[units.length-1].ord=ord; };
+
+/* ---------------- Niveau 1 (A1) ---------------- */
+
+G(91,1,5.5,"Đặt câu hỏi","Poser toutes les questions de base",
+"Sans questions, pas de conversation. Bonne nouvelle : en vietnamien, le mot interrogatif reste à la place du mot qu'il remplace — pas d'inversion, pas d'auxiliaire.",
+[["gì","quoi / quel",""],
+ ["ai","qui",""],
+ ["đâu","où",""],
+ ["chừng nào","quand (futur)","Sud ; Nord : bao giờ"],
+ ["hồi nào","quand (passé)","Sud"],
+ ["sao / tại sao","pourquoi","« sao » seul est très courant au Sud"],
+ ["làm sao","comment",""],
+ ["mấy","combien (petit nombre)","mấy giờ, mấy tuổi"],
+ ["bao nhiêu","combien (grand nombre)","bao nhiêu tiền"],
+ ["chưa","pas encore / déjà… ?","en fin de phrase = question"],
+ ["rồi","déjà / c'est fait",""],
+ ["được không","c'est possible ? / ça te va ?",""],
+ ["phải không","n'est-ce pas ?",""],
+ ["hả","hein ? (surprise)","très oral"]],
+`<p><b>1. Question fermée (oui / non)</b> : <span class="mono">Có + verbe + không?</span></p>
+ <ul><li><i>Anh có khỏe không?</i> — Tu vas bien ?</li><li>On répond <i>Có</i> (oui) ou <i>Không</i> (non), souvent en répétant le verbe : <i>Khỏe.</i></li>
+ <li>« có » peut tomber à l'oral : <i>Rảnh không?</i> (T'es libre ?)</li></ul>
+ <p><b>2. « Déjà… ? » avec chưa</b> : <span class="mono">Sujet + verbe + chưa?</span></p>
+ <ul><li><i>Ăn cơm chưa?</i> — Tu as déjà mangé ? (la question d'accueil la plus fréquente du Vietnam)</li>
+ <li>Réponses : <i>Rồi.</i> (oui, c'est fait) / <i>Chưa.</i> (pas encore)</li></ul>
+ <p><b>3. Les mots interrogatifs ne bougent pas.</b> Ils prennent la place du mot cherché :</p>
+ <ul><li><i>Anh đi <b>đâu</b>?</i> — Tu vas où ? (et non « où vas-tu »)</li>
+ <li><i>Em ăn <b>gì</b>?</i> — Tu manges quoi ?</li>
+ <li><i><b>Ai</b> nấu cơm?</i> — Qui cuisine ? (ai en sujet reste au début)</li>
+ <li><i>Cái này bao nhiêu tiền?</i> — Ça coûte combien ?</li></ul>
+ <p><b>4. Confirmer</b> : <span class="mono">…, phải không?</span> (n'est-ce pas ?) et <span class="mono">…, được không?</span> (c'est d'accord ?).</p>
+ <div class="callout">Au Sud, « chừng nào » (quand, pour le futur) et « hồi nào » (quand, pour le passé) remplacent le « bao giờ » du Nord. <i>Chừng nào em về?</i> = Tu rentres quand ?</div>`,
+[{sp:"A",vn:"Em ăn cơm chưa?",fr:"Tu as déjà mangé ?"},
+ {sp:"B",vn:"Dạ chưa. Chừng nào mình ăn?",fr:"Pas encore. On mange quand ?"},
+ {sp:"A",vn:"Sáu giờ nha. Em muốn ăn gì?",fr:"À six heures, d'accord ? Tu veux manger quoi ?"},
+ {sp:"B",vn:"Gì cũng được. Ăn ở đâu vậy?",fr:"N'importe quoi, ça me va. On mange où ?"}],
+{mcq:[["Comment demander « Tu as faim ? »",["Có đói không?","Đói có không?","Không đói có?"],0],
+ ["« Ăn cơm chưa? » signifie :",["Tu as déjà mangé ?","Tu manges du riz","Mange du riz !"],0],
+ ["Où se place le mot interrogatif « đâu » dans « Tu vas où ? »",["À la fin : Anh đi đâu?","Au début : Đâu anh đi?","Il n'y en a pas"],0],
+ ["Au Sud, « quand » (futur) se dit :",["chừng nào","bao giờ","hồi nào"],0],
+ ["Pour répondre « pas encore » :",["Chưa.","Rồi.","Có."],0]],
+ listen:[["chừng nào",["quand (futur)","pourquoi","combien"],0],
+ ["bao nhiêu",["combien (grand nombre)","qui","où"],0],
+ ["phải không",["n'est-ce pas ?","c'est possible ?","pas encore"],0]],
+ fill:[["Tu vas bien ? → Anh ___ khỏe không?","có","c… (1 mot)"],
+ ["Tu as déjà mangé ? → Ăn cơm ___?","chưa","c… (1 mot)"],
+ ["Tu vas où ? → Anh đi ___?","đâu","đ… (1 mot)"],
+ ["Ça coûte combien ? → Cái này ___ tiền?","bao nhiêu","b… (2 mots)"]]});
+
+G(92,1,6.5,"Muốn, thích, cần & từ nối","Vouloir, aimer, avoir besoin — et relier ses idées",
+"Avec « muốn », « thích » et trois petits mots de liaison, tu passes de la phrase isolée à la vraie phrase de conversation.",
+[["muốn","vouloir",""],
+ ["thích","aimer, apprécier",""],
+ ["không thích","ne pas aimer",""],
+ ["ghét","détester",""],
+ ["cần","avoir besoin de",""],
+ ["thử","essayer",""],
+ ["cũng","aussi","se place avant le verbe"],
+ ["và","et","surtout entre deux noms"],
+ ["với","avec / et","très oral au Sud"],
+ ["nhưng","mais",""],
+ ["hoặc / hay","ou",""],
+ ["rồi","puis, ensuite",""],
+ ["một chút","un peu",""],
+ ["lắm","beaucoup","après l'adjectif : ngon lắm"]],
+`<p><b>1. Vouloir, aimer, avoir besoin</b> se placent directement devant le verbe ou le nom, sans rien entre les deux :</p>
+ <ul><li><i>Tui muốn đi.</i> — Je veux y aller.</li><li><i>Tui thích cà phê.</i> — J'aime le café.</li>
+ <li><i>Em cần một cái ly.</i> — J'ai besoin d'un verre.</li>
+ <li>Négation : <span class="mono">không</span> devant — <i>Tui không muốn ăn.</i></li></ul>
+ <p><b>2. « cũng » (aussi)</b> se place <b>avant le verbe</b>, jamais à la fin comme en français :</p>
+ <ul><li><i>Tui cũng thích.</i> — Moi aussi j'aime. (et non « thích cũng »)</li>
+ <li><i>Gì cũng được.</i> — N'importe quoi me va. (expression très utile)</li></ul>
+ <p><b>3. « và » ou « với » ?</b> « và » relie surtout deux noms à l'écrit ; à l'oral du Sud on entend beaucoup <span class="mono">với</span> :</p>
+ <ul><li><i>Cà phê và trà.</i> / <i>Cà phê với trà.</i> — Du café et du thé.</li>
+ <li>Entre deux phrases, on utilise <span class="mono">rồi</span> (puis) : <i>Tui ăn cơm rồi đi làm.</i></li></ul>
+ <p><b>4. Intensité</b> : <span class="mono">một chút</span> (un peu) après le verbe, <span class="mono">lắm</span> (beaucoup) après l'adjectif.</p>
+ <div class="callout">« Thử » veut dire essayer : <i>Ăn thử đi!</i> = « Goûte voir ! » C'est ce qu'on te dira à chaque repas de famille.</div>`,
+[{sp:"A",vn:"Em muốn uống gì? Cà phê hay trà?",fr:"Tu veux boire quoi ? Du café ou du thé ?"},
+ {sp:"B",vn:"Em thích cà phê lắm, nhưng tối rồi.",fr:"J'aime beaucoup le café, mais il est tard."},
+ {sp:"A",vn:"Vậy uống trà nha. Chị cũng uống trà.",fr:"Alors prends du thé. Moi aussi je prends du thé."},
+ {sp:"B",vn:"Dạ. Em cần một chút đường.",fr:"D'accord. J'ai besoin d'un peu de sucre."}],
+{mcq:[["Où se place « cũng » (aussi) ?",["Avant le verbe","Après le verbe","En fin de phrase"],0],
+ ["« Tui không muốn ăn » signifie :",["Je ne veux pas manger","Je veux manger","Je n'aime pas manger"],0],
+ ["Pour dire « j'ai besoin d'un verre » :",["Tui cần một cái ly","Tui muốn một cái ly","Tui thích một cái ly"],0],
+ ["« Gì cũng được » veut dire :",["N'importe quoi me va","Je ne veux rien","Qu'est-ce que c'est ?"],0],
+ ["« Ăn thử đi! » veut dire :",["Goûte voir !","Mange tout !","Ne mange pas !"],0]],
+ listen:[["muốn",["vouloir","aimer","avoir besoin"],0],
+ ["nhưng",["mais","et","ou"],0],
+ ["một chút",["un peu","beaucoup","rien"],0]],
+ fill:[["Je veux y aller. → Tui ___ đi.","muốn","m… (1 mot)"],
+ ["Moi aussi j'aime. → Tui ___ thích.","cũng","c… (1 mot)"],
+ ["J'aime le café mais pas le thé. → Tui thích cà phê ___ không thích trà.","nhưng","n… (1 mot)"],
+ ["C'est très bon. → Ngon ___.","lắm","l… (1 mot)"]]});
+
+G(93,1,7.6,"Giới thiệu bản thân","Dire qui on est : nom, âge, métier, pays",
+"C'est la première chose qu'on te demandera, et souvent dans cet ordre : ton nom, ton âge, ton métier, d'où tu viens.",
+[["tên","prénom / nom",""],
+ ["họ","nom de famille",""],
+ ["tuổi","an(s), âge",""],
+ ["năm nay","cette année",""],
+ ["nghề","métier",""],
+ ["làm","faire, travailler comme",""],
+ ["người Pháp","français(e) (personne)",""],
+ ["người Việt","vietnamien(ne) (personne)",""],
+ ["nước","pays",""],
+ ["sống","vivre, habiter",""],
+ ["nói","parler",""],
+ ["tiếng","langue",""],
+ ["học","étudier, apprendre",""],
+ ["rất vui","enchanté(e)","rất vui được gặp anh/chị"]],
+`<p><b>1. Le nom</b> — deux formules, les deux correctes :</p>
+ <ul><li><i>Tui tên là Blandine.</i> / <i>Tên tui là Blandine.</i> — Je m'appelle Blandine.</li>
+ <li>Question : <i>Em tên gì?</i> (ton prénom, c'est quoi ?)</li></ul>
+ <p><b>2. L'âge</b> — pas de verbe « avoir », on dit « je suis X ans » :</p>
+ <ul><li><i>Năm nay tui 30 tuổi.</i> — Cette année j'ai 30 ans.</li>
+ <li>À un enfant : <i>Con mấy tuổi?</i> ; à un adulte : <i>Anh bao nhiêu tuổi?</i></li></ul>
+ <p><b>3. Le métier</b> — avec <span class="mono">làm</span> (travailler comme) ou <span class="mono">là</span> (être) :</p>
+ <ul><li><i>Tui làm bác sĩ.</i> / <i>Tui là bác sĩ.</i> — Je suis médecin.</li>
+ <li>Question : <i>Anh làm nghề gì?</i> — Vous faites quel métier ?</li></ul>
+ <p><b>4. La nationalité et la langue</b> : <span class="mono">người + pays</span>, <span class="mono">tiếng + pays</span> :</p>
+ <ul><li><i>Tui là người Pháp.</i> — Je suis française.</li>
+ <li><i>Tui nói tiếng Việt một chút.</i> — Je parle un peu vietnamien.</li>
+ <li><i>Tui đang học tiếng Việt.</i> — J'apprends le vietnamien.</li></ul>
+ <div class="callout">La politesse d'ouverture : <i>Rất vui được gặp anh.</i> (Enchantée de vous rencontrer.) Et on termine souvent par <i>Dạ</i> pour adoucir.</div>`,
+[{sp:"A",vn:"Chào em, em tên gì?",fr:"Bonjour, comment t'appelles-tu ?"},
+ {sp:"B",vn:"Dạ, em tên Blandine. Em là người Pháp.",fr:"Je m'appelle Blandine. Je suis française."},
+ {sp:"A",vn:"Em làm nghề gì?",fr:"Tu fais quel métier ?"},
+ {sp:"B",vn:"Em làm bác sĩ. Em đang học tiếng Việt.",fr:"Je suis médecin. J'apprends le vietnamien."}],
+{mcq:[["Pour dire « je m'appelle Nam » :",["Tui tên là Nam","Tui là tên Nam","Tên là tui Nam"],0],
+ ["Pour dire « j'ai 30 ans » :",["Tui 30 tuổi","Tui có 30 tuổi","Tui là 30 tuổi"],0],
+ ["« Anh làm nghề gì? » demande :",["le métier","l'âge","le pays"],0],
+ ["« Je suis française » se dit :",["Tui là người Pháp","Tui là tiếng Pháp","Tui là nước Pháp"],0],
+ ["« tiếng » veut dire :",["langue","pays","personne"],0]],
+ listen:[["tuổi",["an(s), âge","métier","nom"],0],
+ ["nghề",["métier","langue","pays"],0],
+ ["sống",["vivre, habiter","parler","étudier"],0]],
+ fill:[["Je m'appelle Mai. → Tui ___ là Mai.","tên","t… (1 mot)"],
+ ["J'ai 30 ans. → Tui 30 ___.","tuổi","t… (1 mot)"],
+ ["Je suis médecin. → Tui ___ bác sĩ.","làm","l… (1 mot)"],
+ ["Je parle vietnamien. → Tui nói ___ Việt.","tiếng","t… (1 mot)"]]});
+
+G(94,1,9.5,"Này, đó, kia & loại từ","Ceci, cela — et les classificateurs",
+"Devant presque tout nom compté ou désigné, le vietnamien place un petit mot : le classificateur. C'est ce qui fait sonner la phrase juste.",
+[["này","ce… -ci",""],
+ ["đó","ce… -là","Sud ; Nord : đấy"],
+ ["kia","ce… là-bas",""],
+ ["cái","classificateur des objets",""],
+ ["con","classificateur des animaux","et de quelques objets : con dao, con đường"],
+ ["chiếc","classificateur des véhicules","chiếc xe"],
+ ["cuốn","classificateur des livres","Nord : quyển"],
+ ["trái","classificateur des fruits","Sud ; Nord : quả"],
+ ["ly","verre (contenant)","Sud ; Nord : cốc"],
+ ["tờ","classificateur du papier","tờ giấy, tờ báo"],
+ ["cây","classificateur des objets longs","cây bút, cây dù"],
+ ["người","classificateur des personnes",""],
+ ["chỗ","place, endroit",""],
+ ["đây","ici",""]],
+`<p><b>1. L'ordre des mots</b> est l'inverse du français :</p>
+ <ul><li><span class="mono">(Nombre) + Classificateur + Nom + Démonstratif</span></li>
+ <li><i>cái bàn này</i> — cette table-ci (littéralement « classificateur table ci »)</li>
+ <li><i>con chó đó</i> — ce chien-là</li>
+ <li><i>hai trái xoài</i> — deux mangues</li></ul>
+ <p><b>2. Les classificateurs les plus fréquents</b> :</p>
+ <ul><li><span class="mono">cái</span> : objets en général — cái bàn, cái ghế, cái áo</li>
+ <li><span class="mono">con</span> : animaux — con chó, con mèo, con cá ; mais aussi con dao (couteau), con đường (route)</li>
+ <li><span class="mono">người</span> : personnes — hai người bạn (deux amis)</li>
+ <li><span class="mono">trái</span> (Sud) : fruits — trái cam, trái chuối</li>
+ <li><span class="mono">ly</span> (Sud) : un verre de — một ly cà phê</li></ul>
+ <p><b>3. Montrer quelque chose</b> : <span class="mono">Cái này là gì?</span> (Qu'est-ce que c'est ?) — réponse <i>Cái này là…</i></p>
+ <ul><li><i>Cái đó bao nhiêu tiền?</i> — Ça coûte combien, ça ?</li></ul>
+ <div class="callout">Trois repères du Sud à retenir ensemble : <b>trái</b> (et non quả) pour les fruits, <b>ly</b> (et non cốc) pour un verre, <b>đó</b> (et non đấy) pour « là ».</div>`,
+[{sp:"A",vn:"Cái này là gì vậy?",fr:"Qu'est-ce que c'est, ça ?"},
+ {sp:"B",vn:"Dạ, cái đó là trái mãng cầu.",fr:"Ça, c'est un corossol."},
+ {sp:"A",vn:"Cho tui hai trái đi. Với một ly nước mía nha.",fr:"Donnez-m'en deux. Et un verre de jus de canne aussi."},
+ {sp:"B",vn:"Dạ, chờ một chút nghen.",fr:"Oui, patientez un instant."}],
+{mcq:[["« cette table-ci » se dit :",["cái bàn này","này cái bàn","bàn này cái"],0],
+ ["Quel classificateur pour un chien ?",["con","cái","trái"],0],
+ ["Au Sud, « deux mangues » se dit :",["hai trái xoài","hai quả xoài","hai cái xoài"],0],
+ ["« Cái này là gì? » signifie :",["Qu'est-ce que c'est ?","Combien ça coûte ?","Où est-ce ?"],0],
+ ["Au Sud, un verre de café se dit :",["một ly cà phê","một cốc cà phê","một cái cà phê"],0]],
+ listen:[["trái",["classificateur des fruits","classificateur des animaux","verre"],0],
+ ["cuốn",["classificateur des livres","classificateur des véhicules","papier"],0],
+ ["chỗ",["place, endroit","ici","là-bas"],0]],
+ fill:[["ce chien-là → ___ chó đó","con","c… (1 mot)"],
+ ["cette chemise-ci → cái áo ___","này","n… (1 mot)"],
+ ["un verre de café (Sud) → một ___ cà phê","ly","l… (1 mot)"],
+ ["deux mangues (Sud) → hai ___ xoài","trái","t… (1 mot)"]]});
+
+VO(95,1,9.6,"Động từ hằng ngày","Les 20 verbes que tu utiliseras tous les jours",
+"Un verbe vietnamien ne se conjugue jamais : apprends-le une fois, il te servira à tous les temps.",
+"Apprends chaque verbe dans une petite phrase plutôt que seul : « ăn cơm », « đi làm », « về nhà ». C'est comme ça qu'ils viennent naturellement à l'oral.",
+[["ăn","manger",""],["uống","boire",""],["ngủ","dormir",""],["thức dậy","se réveiller, se lever",""],
+ ["đi","aller, partir",""],["về","rentrer, revenir",""],["đến / tới","arriver, venir","« tới » est plus courant au Sud"],
+ ["làm","faire, travailler",""],["học","étudier",""],["đọc","lire",""],["viết","écrire",""],
+ ["nói","parler, dire",""],["nghe","écouter, entendre",""],["coi","regarder","Sud ; Nord : xem"],
+ ["mua","acheter",""],["bán","vendre",""],["cho","donner",""],["lấy","prendre",""],
+ ["mở","ouvrir, allumer",""],["đóng","fermer",""],["rửa","laver",""],["nấu","cuisiner",""]],
+[{sp:"A",vn:"Sáng nay em thức dậy mấy giờ?",fr:"Tu t'es levée à quelle heure ce matin ?"},
+ {sp:"B",vn:"Dạ sáu giờ. Em ăn sáng rồi đi làm.",fr:"À six heures. J'ai déjeuné puis je suis allée travailler."},
+ {sp:"A",vn:"Chiều về nhà em làm gì?",fr:"Et en rentrant l'après-midi, tu fais quoi ?"},
+ {sp:"B",vn:"Em nấu cơm, rửa chén rồi coi phim.",fr:"Je cuisine, je fais la vaisselle puis je regarde un film."}]);
+
+VO(96,1,7.7,"Nghề nghiệp & quốc gia","Métiers, pays et langues",
+"Pour te présenter et comprendre qui fait quoi dans la famille, il te faut une petite liste de métiers et de pays.",
+"« Người + pays » désigne la personne, « tiếng + pays » désigne la langue, « nước + pays » désigne le pays lui-même.",
+[["bác sĩ","médecin",""],["y tá / điều dưỡng","infirmier(ère)",""],["giáo viên","enseignant(e)",""],
+ ["học sinh","élève",""],["sinh viên","étudiant(e)",""],["kỹ sư","ingénieur(e)",""],
+ ["công nhân","ouvrier(ère)",""],["nông dân","agriculteur(rice)",""],["nhân viên","employé(e)",""],
+ ["tài xế","chauffeur","Sud ; Nord : lái xe"],["đầu bếp","cuisinier(ère)",""],["nội trợ","au foyer",""],
+ ["buôn bán","faire du commerce",""],["nghỉ hưu","à la retraite",""],
+ ["nước Pháp","la France",""],["Việt Nam","le Viêt Nam",""],["Trung Quốc","la Chine",""],
+ ["người Pháp","français(e)",""],["người Việt","vietnamien(ne)",""],
+ ["tiếng Pháp","le français",""],["tiếng Việt","le vietnamien",""],["tiếng Anh","l'anglais",""]],
+[{sp:"A",vn:"Ba em làm nghề gì?",fr:"Ton père fait quel métier ?"},
+ {sp:"B",vn:"Dạ, ba em là kỹ sư. Má em nghỉ hưu rồi.",fr:"Mon père est ingénieur. Ma mère est à la retraite."},
+ {sp:"A",vn:"Còn em? Em là người Pháp hả?",fr:"Et toi ? Tu es française ?"},
+ {sp:"B",vn:"Dạ. Em làm bác sĩ, em nói tiếng Pháp và tiếng Việt.",fr:"Oui. Je suis médecin, je parle français et vietnamien."}]);
+
+VO(97,1,69.5,"Con vật & cây cối","Animaux et plantes autour de la maison",
+"Dans le Delta, les animaux et les arbres sont partout dans les conversations — et dans les proverbes.",
+"Les noms d'animaux prennent presque toujours le classificateur « con » : con chó, con mèo, con gà.",
+[["con chó","chien",""],["con mèo","chat",""],["con gà","poulet",""],["con vịt","canard",""],
+ ["con heo","cochon","Sud ; Nord : lợn"],["con bò","vache, bœuf",""],["con trâu","buffle",""],
+ ["con cá","poisson",""],["con tôm","crevette",""],["con chim","oiseau",""],["con chuột","souris, rat",""],
+ ["con muỗi","moustique",""],["con kiến","fourmi",""],["con rắn","serpent",""],
+ ["cây","arbre",""],["hoa / bông","fleur","« bông » est très courant au Sud"],["lá","feuille",""],
+ ["rau","légume, herbes",""],["trái cây","fruits","Sud ; Nord : hoa quả"],["vườn","jardin, verger",""],
+ ["sông","fleuve, rivière",""],["ruộng","rizière",""]],
+[{sp:"A",vn:"Nhà ngoại có nuôi con gì không?",fr:"Chez ta grand-mère, il y a des animaux ?"},
+ {sp:"B",vn:"Dạ có. Ngoại nuôi gà, vịt với hai con chó.",fr:"Oui. Elle élève des poules, des canards et deux chiens."},
+ {sp:"A",vn:"Ngoài vườn có trồng gì?",fr:"Et dans le jardin, qu'est-ce qui pousse ?"},
+ {sp:"B",vn:"Có cây xoài, rau với nhiều bông lắm.",fr:"Il y a un manguier, des légumes et beaucoup de fleurs."}]);
+
+/* ---------------- Niveau 2 (A2) ---------------- */
+
+G(98,2,18.5,"Phải, nên & không được","Obligation, conseil, interdiction",
+"Trois petits mots suffisent pour dire ce qu'on doit faire, ce qu'on ferait mieux de faire, et ce qui est interdit.",
+[["phải","devoir (obligation)",""],
+ ["cần","avoir besoin de",""],
+ ["nên","devoir (conseil)",""],
+ ["không nên","ne pas devoir (déconseillé)",""],
+ ["được","pouvoir, être permis",""],
+ ["không được","interdit, pas le droit",""],
+ ["khỏi","pas besoin de","Sud ; très courant"],
+ ["đừng","ne… pas (défense douce)",""],
+ ["cấm","interdit (panneau, règlement)",""],
+ ["bắt buộc","obligatoire",""],
+ ["nhớ","penser à, se souvenir",""],
+ ["quên","oublier",""],
+ ["tốt hơn","mieux",""],
+ ["coi chừng","attention, fais gaffe","Sud"]],
+`<p><b>1. L'obligation</b> : <span class="mono">phải + verbe</span></p>
+ <ul><li><i>Em phải uống thuốc.</i> — Tu dois prendre le médicament.</li>
+ <li><i>Tui phải đi làm sớm.</i> — Je dois partir travailler tôt.</li></ul>
+ <p><b>2. Le conseil</b> : <span class="mono">nên + verbe</span> (tu devrais) et <span class="mono">không nên</span> (tu ne devrais pas)</p>
+ <ul><li><i>Anh nên nghỉ một chút.</i> — Tu devrais te reposer un peu.</li>
+ <li><i>Không nên ăn khuya.</i> — Il ne faut pas manger tard le soir.</li></ul>
+ <p><b>3. Permission et interdiction</b></p>
+ <ul><li><span class="mono">được</span> : <i>Vô được không?</i> (On peut entrer ?) — réponse <i>Được.</i></li>
+ <li><span class="mono">không được</span> : <i>Ở đây không được hút thuốc.</i> — Ici, il est interdit de fumer.</li>
+ <li><span class="mono">đừng</span> : défense adressée à quelqu'un, plus douce — <i>Đừng lo.</i> (Ne t'inquiète pas.)</li></ul>
+ <p><b>4. « khỏi » : la négation d'obligation du Sud</b></p>
+ <ul><li><i>Khỏi trả tiền.</i> — Pas besoin de payer.</li>
+ <li><i>Khỏi lo!</i> — T'inquiète pas ! (très fréquent à Sài Gòn)</li></ul>
+ <div class="callout">Ne confonds pas <b>không phải</b> (ce n'est pas ça) et <b>không cần / khỏi</b> (pas besoin). <i>Không phải vậy.</i> = Ce n'est pas comme ça. <i>Khỏi cần.</i> = Pas la peine.</div>`,
+[{sp:"A",vn:"Em bị sốt, em phải uống thuốc nha.",fr:"Tu as de la fièvre, tu dois prendre le médicament."},
+ {sp:"B",vn:"Dạ. Em có cần đi khám không?",fr:"D'accord. Est-ce que je dois aller consulter ?"},
+ {sp:"A",vn:"Nếu còn sốt thì nên đi. Đừng đi làm hôm nay.",fr:"Si tu as encore de la fièvre, tu devrais y aller. Ne va pas travailler aujourd'hui."},
+ {sp:"B",vn:"Dạ, khỏi lo. Em nghỉ ở nhà.",fr:"Oui, t'inquiète pas. Je me repose à la maison."}],
+{mcq:[["« Tu dois prendre le médicament » se dit :",["Em phải uống thuốc","Em nên thuốc uống","Em được uống thuốc"],0],
+ ["« nên » exprime :",["un conseil","une interdiction","une obligation stricte"],0],
+ ["« Ở đây không được hút thuốc » signifie :",["Ici il est interdit de fumer","Ici on peut fumer","Ici on doit fumer"],0],
+ ["Au Sud, « pas besoin de payer » se dit :",["Khỏi trả tiền","Phải trả tiền","Được trả tiền"],0],
+ ["« Đừng lo » veut dire :",["Ne t'inquiète pas","Inquiète-toi","Je m'inquiète"],0]],
+ listen:[["phải",["devoir (obligation)","pouvoir","oublier"],0],
+ ["đừng",["ne… pas (défense)","il faut","peut-être"],0],
+ ["coi chừng",["attention, fais gaffe","c'est bon","pas besoin"],0]],
+ fill:[["Tu devrais te reposer. → Anh ___ nghỉ một chút.","nên","n… (1 mot)"],
+ ["Je dois partir tôt. → Tui ___ đi sớm.","phải","p… (1 mot)"],
+ ["On peut entrer ? → Vô ___ không?","được","đ… (1 mot)"],
+ ["N'oublie pas ! → ___ quên nha!","Đừng","Đ… (1 mot)"]]});
+
+G(99,2,19.5,"Tần suất & số lượng","Dire à quelle fréquence et en quelle quantité",
+"« Souvent », « rarement », « chaque jour », « il n'y en a plus » : ces mots structurent presque toutes les conversations du quotidien.",
+[["thường / hay","souvent","« hay » est très courant au Sud"],
+ ["luôn luôn","toujours",""],
+ ["thỉnh thoảng","de temps en temps",""],
+ ["ít khi","rarement",""],
+ ["không bao giờ","jamais",""],
+ ["mỗi","chaque",""],
+ ["mọi","tous les",""],
+ ["lần","fois",""],
+ ["vài","quelques",""],
+ ["nhiều","beaucoup",""],
+ ["ít","peu",""],
+ ["hết","fini, il n'y en a plus",""],
+ ["còn","rester, il y a encore",""],
+ ["đủ","assez, suffisant",""],
+ ["khoảng","environ",""],
+ ["gần","presque, près de",""]],
+`<p><b>1. Les adverbes de fréquence se placent avant le verbe</b> :</p>
+ <ul><li><i>Tui thường đi chợ buổi sáng.</i> — Je vais souvent au marché le matin.</li>
+ <li><i>Nó ít khi về nhà.</i> — Il rentre rarement à la maison.</li>
+ <li><i>Tui không bao giờ uống rượu.</i> — Je ne bois jamais d'alcool.</li></ul>
+ <p><b>2. « mỗi » (chaque) + unité de temps</b> :</p>
+ <ul><li><i>mỗi ngày</i> (chaque jour), <i>mỗi tuần</i> (chaque semaine), <i>mỗi tháng</i> (chaque mois)</li>
+ <li>Combien de fois : <span class="mono">số + lần + một + période</span> — <i>hai lần một tuần</i> (deux fois par semaine)</li>
+ <li>Question : <i>Bao lâu một lần?</i> — Tous les combien ?</li></ul>
+ <p><b>3. Quantité</b> : <span class="mono">nhiều</span> (beaucoup), <span class="mono">ít</span> (peu), <span class="mono">vài</span> (quelques), <span class="mono">đủ</span> (assez).</p>
+ <ul><li><i>Nhiều người lắm.</i> — Il y a beaucoup de monde.</li>
+ <li><i>Đủ rồi.</i> — Ça suffit / c'est assez. (très utile à table !)</li></ul>
+ <p><b>4. « hết » et « còn »</b>, la paire la plus utile au marché :</p>
+ <ul><li><i>Hết rồi.</i> — Il n'y en a plus.</li><li><i>Còn không?</i> — Il en reste ?</li>
+ <li><i>Còn hai cái.</i> — Il en reste deux.</li></ul>
+ <div class="callout">Au Sud, « hay » remplace souvent « thường » : <i>Tui hay đi chợ.</i> = J'y vais souvent. Attention, « hay » veut aussi dire « ou » et « intéressant » — c'est le contexte qui tranche.</div>`,
+[{sp:"A",vn:"Em hay đi chợ không?",fr:"Tu vas souvent au marché ?"},
+ {sp:"B",vn:"Dạ, mỗi tuần hai lần. Còn chị?",fr:"Oui, deux fois par semaine. Et toi ?"},
+ {sp:"A",vn:"Chị ít khi đi. Chị thường đi siêu thị.",fr:"J'y vais rarement. Je vais souvent au supermarché."},
+ {sp:"B",vn:"Hôm nay còn cá không chị?",fr:"Il reste du poisson aujourd'hui ?"},
+ {sp:"A",vn:"Hết rồi em ơi, mai nha.",fr:"Il n'y en a plus, demain d'accord ?"}],
+{mcq:[["Où se place « thường » (souvent) ?",["Avant le verbe","Après le verbe","En fin de phrase"],0],
+ ["« deux fois par semaine » se dit :",["hai lần một tuần","một tuần hai","hai tuần một lần"],0],
+ ["« Hết rồi » signifie :",["Il n'y en a plus","Il en reste","C'est fini de manger"],0],
+ ["« ít khi » veut dire :",["rarement","souvent","toujours"],0],
+ ["Au Sud, « Tui hay đi chợ » signifie :",["Je vais souvent au marché","Je vais ou au marché","Le marché est intéressant"],0]],
+ listen:[["thỉnh thoảng",["de temps en temps","toujours","jamais"],0],
+ ["khoảng",["environ","assez","beaucoup"],0],
+ ["đủ",["assez, suffisant","fini","peu"],0]],
+ fill:[["Je vais souvent au marché. → Tui ___ đi chợ.","thường","t… (1 mot)"],
+ ["chaque jour → ___ ngày","mỗi","m… (1 mot)"],
+ ["Il n'y en a plus. → ___ rồi.","Hết","H… (1 mot)"],
+ ["Il en reste deux. → ___ hai cái.","Còn","C… (1 mot)"]]});
+
+VO(100,2,73.5,"Giao tiếp & phép lịch sự","Politesse, remerciements et petits échanges",
+"La politesse vietnamienne tient à peu de mots, mais ils reviennent dans chaque phrase. Les placer juste change tout de suite l'impression que tu donnes.",
+"Au Sud, « Không có chi » répond à un merci (le Nord dit « Không có gì »). Et « Dạ » en tête de phrase marque le respect, bien plus que « vâng ».",
+[["cảm ơn","merci",""],["không có chi","de rien","Sud ; Nord : không có gì"],
+ ["xin lỗi","pardon, désolé(e)",""],["không sao","ce n'est rien, pas grave",""],
+ ["dạ","oui (respectueux) / marque de politesse","Sud ; Nord : vâng"],
+ ["làm ơn","s'il vous plaît",""],["vui lòng","veuillez (écrit, formel)",""],
+ ["làm phiền","déranger",""],["xin phép","demander la permission",""],
+ ["nhờ","demander un service",""],["giúp","aider",""],["mời","inviter, convier",""],
+ ["chờ / đợi","attendre",""],["hẹn gặp lại","à bientôt",""],["tạm biệt","au revoir",""],
+ ["chúc mừng","félicitations",""],["chia buồn","condoléances",""],
+ ["chúc ngủ ngon","bonne nuit",""],["ăn cơm chưa","tu as déjà mangé ? (salut courant)",""],
+ ["lâu quá","ça fait longtemps",""],["dạ thưa","formule très respectueuse","devant un aîné"],
+ ["được rồi","c'est bon, ça ira",""]],
+[{sp:"A",vn:"Dạ, làm ơn cho con hỏi một chút.",fr:"Pardon, puis-je vous demander quelque chose ?"},
+ {sp:"B",vn:"Dạ, con cứ hỏi.",fr:"Oui, vas-y, demande."},
+ {sp:"A",vn:"Con nhờ cô chỉ đường giùm con.",fr:"Je voudrais vous demander de m'indiquer le chemin."},
+ {sp:"B",vn:"Được rồi, đi thẳng rồi quẹo phải nghen.",fr:"D'accord, va tout droit puis tourne à droite."},
+ {sp:"A",vn:"Dạ con cảm ơn cô nhiều.",fr:"Merci beaucoup."},
+ {sp:"B",vn:"Không có chi.",fr:"De rien."}]);
+
+/* ---------------- Niveaux 3 à 6 : compléments de vocabulaire ---------------- */
+
+VO(101,3,77.5,"Sức khỏe & đi khám bệnh","Décrire ses symptômes et comprendre une consultation",
+"Savoir dire où on a mal et comprendre les consignes d'un médecin est l'un des usages les plus concrets de la langue.",
+"Au Sud, on dit « phòng mạch » pour le cabinet, « toa thuốc » pour l'ordonnance et « chích » pour une piqûre. Les termes du Nord (phòng khám, đơn thuốc, tiêm) s'entendent aussi dans l'administration.",
+[["khám bệnh","consulter, examiner",""],["phòng mạch","cabinet médical","Sud ; Nord : phòng khám"],
+ ["bệnh viện","hôpital",""],["toa thuốc","ordonnance","Sud ; Nord : đơn thuốc"],
+ ["thuốc","médicament",""],["uống thuốc","prendre un médicament",""],
+ ["chích","faire une piqûre","Sud ; Nord : tiêm"],["thử máu","faire une prise de sang",""],
+ ["chụp phim","faire une radio",""],["triệu chứng","symptôme",""],
+ ["sốt","fièvre",""],["ho","toux, tousser",""],["đau","avoir mal",""],["mệt","fatigué(e)",""],
+ ["chóng mặt","avoir des vertiges",""],["buồn nôn","avoir la nausée",""],
+ ["dị ứng","allergie",""],["bảo hiểm y tế","assurance maladie",""],
+ ["tái khám","consultation de suivi",""],["nhập viện","être hospitalisé(e)",""],
+ ["cấp cứu","urgences",""],["khỏi bệnh","guérir",""]],
+[{sp:"Bác sĩ",vn:"Chào chị, chị bị gì vậy?",fr:"Bonjour madame, qu'est-ce qui vous arrive ?"},
+ {sp:"Bệnh nhân",vn:"Dạ em bị sốt với ho hai ngày rồi, em thấy mệt lắm.",fr:"J'ai de la fièvre et je tousse depuis deux jours, je me sens très fatiguée."},
+ {sp:"Bác sĩ",vn:"Chị có bị chóng mặt hay buồn nôn không?",fr:"Avez-vous des vertiges ou des nausées ?"},
+ {sp:"Bệnh nhân",vn:"Dạ có chóng mặt một chút. Em có dị ứng thuốc kháng sinh.",fr:"Un peu de vertiges. Je suis allergique aux antibiotiques."},
+ {sp:"Bác sĩ",vn:"Vậy tôi cho toa thuốc khác. Một tuần sau chị tái khám nha.",fr:"Alors je vous donne une autre ordonnance. Revenez en consultation dans une semaine."}]);
+
+VO(102,4,80.5,"Nhà cửa, dịch vụ & sửa chữa","Louer, entretenir et faire réparer son logement",
+"Dès qu'on vit sur place, le vocabulaire du logement devient indispensable : contrat, factures, pannes et réparations.",
+"Quelques mots très sudistes : « hư » (cassé, en panne) là où le Nord dit « hỏng », « cúp điện » pour une coupure de courant, « máy lạnh » pour la climatisation (Nord : điều hòa).",
+[["thuê nhà","louer un logement",""],["chủ nhà","propriétaire",""],["tiền cọc","caution",""],
+ ["hợp đồng","contrat",""],["tiền nhà","loyer",""],["hóa đơn","facture",""],
+ ["điện","électricité",""],["nước","eau",""],["cúp điện","coupure de courant","Sud ; Nord : mất điện"],
+ ["hư","cassé, en panne","Sud ; Nord : hỏng"],["sửa","réparer",""],["thợ","artisan, ouvrier",""],
+ ["máy lạnh","climatisation","Sud ; Nord : điều hòa"],["quạt","ventilateur",""],
+ ["bóng đèn","ampoule",""],["ống nước","canalisation",""],["dột","fuir (toit qui fuit)",""],
+ ["khóa","serrure, verrouiller",""],["dọn nhà","déménager, ranger la maison",""],
+ ["rác","ordures",""],["bảo trì","entretien, maintenance",""],["an ninh","sécurité",""]],
+[{sp:"A",vn:"Alô, phòng em bị hư máy lạnh rồi anh.",fr:"Allô, la climatisation de ma chambre est en panne."},
+ {sp:"B",vn:"Hư từ hồi nào vậy em?",fr:"Elle est en panne depuis quand ?"},
+ {sp:"A",vn:"Dạ từ hôm qua, sau khi cúp điện.",fr:"Depuis hier, après la coupure de courant."},
+ {sp:"B",vn:"Để anh kêu thợ tới sửa. Chiều mai được không?",fr:"Je vais appeler un artisan pour la réparer. Demain après-midi, ça vous va ?"},
+ {sp:"A",vn:"Dạ được. Còn hóa đơn tiền nước tháng này em chưa nhận.",fr:"Oui, d'accord. Je n'ai pas encore reçu la facture d'eau de ce mois."}]);
+
+VO(103,5,83.5,"Lịch sử & địa lý Việt Nam","Comprendre les repères historiques et géographiques",
+"Ce vocabulaire revient dès qu'on parle du pays, des régions ou des origines d'une famille — des sujets fréquents dans les conversations.",
+"« Miền Nam », « miền Trung », « miền Bắc » structurent toute la conversation sur le pays. Le Delta du Mékong se dit « đồng bằng sông Cửu Long » : « Cửu Long » signifie « neuf dragons », les neuf bras du fleuve.",
+[["lịch sử","histoire",""],["triều đại","dynastie",""],["vua","roi, empereur",""],
+ ["chiến tranh","guerre",""],["hòa bình","paix",""],["độc lập","indépendance",""],
+ ["thống nhất","réunification",""],["thuộc địa","colonie",""],
+ ["miền Nam","le Sud",""],["miền Bắc","le Nord",""],["miền Trung","le Centre",""],
+ ["đồng bằng","plaine, delta",""],["sông Cửu Long","le Mékong","« neuf dragons »"],
+ ["cao nguyên","hauts plateaux",""],["biển Đông","la mer de l'Est",""],
+ ["tỉnh","province",""],["thành phố","ville",""],["thủ đô","capitale",""],
+ ["dân tộc","peuple, ethnie",""],["di tích","site historique",""],
+ ["bảo tàng","musée",""],["truyền thống","tradition",""]],
+[{sp:"A",vn:"Gia đình chị gốc ở đâu?",fr:"Votre famille est originaire d'où ?"},
+ {sp:"B",vn:"Dạ gốc miền Tây, ở đồng bằng sông Cửu Long.",fr:"Du Delta du Mékong, dans l'Ouest."},
+ {sp:"A",vn:"Hồi chiến tranh gia đình có đi đâu không?",fr:"Pendant la guerre, la famille s'est-elle déplacée ?"},
+ {sp:"B",vn:"Có, ông bà lên thành phố sau năm thống nhất.",fr:"Oui, mes grands-parents sont montés en ville après la réunification."},
+ {sp:"A",vn:"Ở quê còn di tích nào không chị?",fr:"Il reste des sites historiques au pays natal ?"},
+ {sp:"B",vn:"Còn một ngôi đình cổ, giờ thành di tích rồi.",fr:"Il reste une ancienne maison communale, aujourd'hui classée site historique."}]);
+
+VO(104,6,86.5,"Nghiên cứu & thống kê","Recherche, méthode et statistiques",
+"Ce vocabulaire sert à lire un article scientifique vietnamien, à parler de son travail de recherche ou à comprendre un rapport de santé publique.",
+"Ces mots sont presque tous sino-vietnamiens (Hán Việt) : leur structure se retrouve en chinois, ce qui les rend plus faciles à mémoriser si tu étudies les deux langues.",
+[["nghiên cứu","recherche, étudier",""],["khảo sát","enquête, étude de terrain",""],
+ ["bảng câu hỏi","questionnaire",""],["mẫu","échantillon",""],["dữ liệu","données",""],
+ ["số liệu","chiffres, statistiques",""],["thống kê","statistique",""],["tỷ lệ","taux, proportion",""],
+ ["trung bình","moyenne",""],["phân tích","analyser, analyse",""],
+ ["kết quả","résultat",""],["kết luận","conclusion",""],["giả thuyết","hypothèse",""],
+ ["biến số","variable",""],["đối tượng","sujet, population étudiée",""],
+ ["phỏng vấn","entretien, interviewer",""],["định tính","qualitatif",""],["định lượng","quantitatif",""],
+ ["tài liệu tham khảo","références bibliographiques",""],["công bố","publier",""],
+ ["tạp chí khoa học","revue scientifique",""],["đạo đức nghiên cứu","éthique de la recherche",""]],
+[{sp:"A",vn:"Đề tài nghiên cứu của chị là gì?",fr:"Quel est votre sujet de recherche ?"},
+ {sp:"B",vn:"Dạ, tôi nghiên cứu về béo phì ở trẻ em, theo hướng định tính.",fr:"J'étudie l'obésité infantile, avec une approche qualitative."},
+ {sp:"A",vn:"Chị thu thập dữ liệu bằng cách nào?",fr:"Comment recueillez-vous vos données ?"},
+ {sp:"B",vn:"Tôi phỏng vấn các bác sĩ gia đình, mẫu khoảng ba mươi người.",fr:"J'interviewe des médecins généralistes, sur un échantillon d'environ trente personnes."},
+ {sp:"A",vn:"Kết quả có khác với giả thuyết ban đầu không?",fr:"Les résultats diffèrent-ils de l'hypothèse de départ ?"},
+ {sp:"B",vn:"Có, nên phần kết luận phải viết lại.",fr:"Oui, la conclusion doit donc être réécrite."}]);
+
 
 /* ===== Exercices 4 compétences ===== */
 const SKILLS = {};
@@ -3990,6 +4509,120 @@ S(10,{
   [["Combien de kilos ?",["un","deux","trois"],1],["Prix :",["30 000","40 000","50 000"],1],["Le client est :",["poli","fâché","pressé"],0]]],
  w:["Résume ta journée type en 4 phrases (réveil, repas, famille, plaisir).",["tôi","ăn","gia đình"],"Tôi thức dậy lúc sáu giờ. Tôi ăn sáng với gia đình. Tôi đi chợ mua trái cây. Tôi thích buổi tối.","Je me réveille à 6 h. Je prends le petit déjeuner en famille. Je vais au marché. J'aime la soirée."],
  s:["Présente-toi, dis ta famille et ce que tu manges le matin.",["tên","gia đình","ăn"],"Con tên là Anna. Gia đình con có bốn người. Sáng con ăn bánh mì.","Je m'appelle Anna. Ma famille a quatre personnes. Le matin je mange du pain."]
+});
+
+/* ===== Exercices 4 compétences — unités ajoutées (91 à 104) ===== */
+S(91,{
+ r:["Buổi sáng ở hẻm","Mỗi sáng, cô Bảy mở quán ở đầu hẻm. Ai đi ngang cũng hỏi: « Cô ơi, ăn cơm chưa? » Có người hỏi giá, có người hỏi chừng nào cô dọn hàng. Cô Bảy trả lời hết, rồi cười: « Hỏi gì mà hỏi dữ vậy! »","Chaque matin, cô Bảy ouvre son échoppe au bout de la ruelle. Tous ceux qui passent lui demandent : « Vous avez déjà mangé ? » Certains demandent les prix, d'autres quand elle range son étal. Cô Bảy répond à tout, puis rit : « Qu'est-ce que vous posez comme questions ! »",
+  [["Que demandent les passants en premier ?",["si elle a déjà mangé","son âge","son nom"],0],["« chừng nào » dans le texte signifie :",["quand (futur)","pourquoi","combien"],0],["Comment réagit cô Bảy ?",["elle répond et rit","elle se fâche","elle ne dit rien"],0]]],
+ l:["Em ơi, chừng nào em về? Má hỏi em ăn cơm chưa, với lại ba muốn biết em đi đâu. Nhớ gọi điện nha.","Hé, tu rentres quand ? Maman demande si tu as déjà mangé, et papa veut savoir où tu es allée. Pense à appeler.",
+  [["La question principale :",["quand elle rentre","combien ça coûte","qui elle est"],0],["Ce que demande la mère :",["si elle a mangé","si elle dort","si elle travaille"],0],["Ce qu'il faut faire :",["appeler","écrire","rentrer tout de suite"],0]]],
+ w:["Écris quatre questions que tu poserais à un nouveau voisin (nom, origine, métier, heure).",["tên","đâu","gì","mấy"],"Anh tên gì? Anh ở đâu tới? Anh làm nghề gì? Mấy giờ anh đi làm?","Comment vous appelez-vous ? D'où venez-vous ? Quel est votre métier ? À quelle heure partez-vous travailler ?"],
+ s:["Demande à voix haute si la personne a déjà mangé, puis où elle va.",["cơm","chưa","đâu"],"Anh ăn cơm chưa? Anh đi đâu vậy?","Vous avez déjà mangé ? Vous allez où ?"]
+});
+S(92,{
+ r:["Đi chợ với ngoại","Ngoại thích đi chợ sớm vì rau còn tươi. Ngoại muốn mua cá với rau, nhưng hôm nay cá mắc quá. Ngoại nói: « Thôi mua tôm, tôm cũng ngon lắm. » Tui cần mua thêm trái cây rồi hai bà cháu về.","Grand-mère aime aller au marché tôt parce que les légumes sont encore frais. Elle veut acheter du poisson et des légumes, mais aujourd'hui le poisson est trop cher. Elle dit : « Tant pis, achetons des crevettes, c'est très bon aussi. » Je dois encore acheter des fruits, puis nous rentrons toutes les deux.",
+  [["Pourquoi grand-mère va au marché tôt ?",["les légumes sont frais","c'est moins cher","il fait froid"],0],["Pourquoi ne prend-elle pas de poisson ?",["c'est trop cher","il n'y en a plus","elle n'aime pas"],0],["Ce que le narrateur doit acheter :",["des fruits","du riz","du thé"],0]]],
+ l:["Tui thích cà phê lắm nhưng tối tui không uống. Tui cũng thích trà, trà nhẹ hơn. Em muốn thử một chút không?","J'aime beaucoup le café mais le soir je n'en bois pas. J'aime aussi le thé, c'est plus léger. Tu veux en goûter un peu ?",
+  [["Le soir, la personne :",["ne boit pas de café","boit du café","ne boit rien"],0],["Elle aime aussi :",["le thé","le lait","le jus"],0],["Elle propose de :",["goûter un peu","tout boire","partir"],0]]],
+ w:["Écris ce que tu aimes et ce que tu n'aimes pas manger, en reliant tes phrases.",["thích","nhưng","cũng"],"Tui thích cơm tấm với chả giò, nhưng tui không thích bún mắm. Tui cũng thích trái cây lắm.","J'aime le cơm tấm et les nems, mais je n'aime pas le bún mắm. J'aime aussi beaucoup les fruits."],
+ s:["Dis à voix haute ce que tu veux boire et ce que tu aimes.",["muốn","thích","uống"],"Tui muốn uống cà phê sữa đá, tui thích cà phê lắm.","Je veux boire un café glacé au lait, j'aime beaucoup le café."]
+});
+S(93,{
+ r:["Ngày đầu ở phòng mạch","Chào mọi người, tôi tên Blandine. Tôi là người Pháp, năm nay tôi ba mươi tuổi. Tôi làm bác sĩ ở Paris. Tôi đang học tiếng Việt vì gia đình chồng tôi ở miền Nam. Tôi nói tiếng Việt một chút thôi, mong mọi người giúp tôi.","Bonjour à tous, je m'appelle Blandine. Je suis française, cette année j'ai trente ans. Je suis médecin à Paris. J'apprends le vietnamien parce que la famille de mon mari vit dans le Sud. Je ne parle qu'un peu vietnamien, j'espère que vous m'aiderez.",
+  [["Quel est son métier ?",["médecin","enseignante","étudiante"],0],["Pourquoi apprend-elle le vietnamien ?",["sa belle-famille est du Sud","pour voyager","pour son travail à Paris"],0],["Son niveau de vietnamien :",["elle parle un peu","elle parle couramment","elle ne parle pas du tout"],0]]],
+ l:["Em tên Mai, em hai mươi lăm tuổi. Em là người Việt, em sống ở Sài Gòn. Em làm y tá ở bệnh viện.","Je m'appelle Mai, j'ai vingt-cinq ans. Je suis vietnamienne, je vis à Saïgon. Je suis infirmière à l'hôpital.",
+  [["Son âge :",["25 ans","20 ans","35 ans"],0],["Où elle vit :",["Saïgon","Hanoï","Paris"],0],["Son métier :",["infirmière","médecin","enseignante"],0]]],
+ w:["Présente-toi en quatre phrases : nom, âge, métier, nationalité.",["tên","tuổi","làm","người"],"Tui tên là Blandine. Năm nay tui ba mươi tuổi. Tui làm bác sĩ. Tui là người Pháp.","Je m'appelle Blandine. Cette année j'ai trente ans. Je suis médecin. Je suis française."],
+ s:["Présente-toi à voix haute à un nouvel ami de la famille.",["tên","bác sĩ","Pháp"],"Dạ, con tên Blandine, con làm bác sĩ, con là người Pháp.","Je m'appelle Blandine, je suis médecin, je suis française."]
+});
+S(94,{
+ r:["Ở sạp trái cây","Cái sạp này bán đủ thứ trái cây. Trái xoài kia chín rồi, còn trái mãng cầu này thì chưa. Cô bán hàng đưa cho tui một cái bọc, rồi hỏi tui lấy mấy trái. Tui lấy ba trái xoài với một ly nước mía.","Cet étal vend toutes sortes de fruits. Cette mangue là-bas est mûre, mais ce corossol-ci ne l'est pas encore. La vendeuse me tend un sachet, puis me demande combien j'en prends. Je prends trois mangues et un verre de jus de canne.",
+  [["Quel fruit est mûr ?",["la mangue là-bas","le corossol-ci","aucun"],0],["Ce que tend la vendeuse :",["un sachet","de l'argent","un verre"],0],["La commande finale :",["trois mangues et un jus de canne","un corossol","deux verres"],0]]],
+ l:["Cái này là gì vậy em? À, con dao hả. Cho chị cây dù kia với cuốn sách này nữa nghen.","Qu'est-ce que c'est, ça ? Ah, un couteau. Donne-moi aussi ce parapluie là-bas et ce livre-ci.",
+  [["Le premier objet :",["un couteau","un livre","un parapluie"],0],["Classificateur de « dù » :",["cây","con","cuốn"],0],["Le troisième objet :",["un livre","un couteau","un verre"],0]]],
+ w:["Décris trois objets autour de toi avec un classificateur et un démonstratif.",["cái","này","con"],"Cái bàn này mới, cái ghế đó cũ, còn con mèo kia của nhà bên.","Cette table-ci est neuve, cette chaise-là est vieille, et ce chat là-bas est celui des voisins."],
+ s:["Demande le prix de deux objets en utilisant les classificateurs.",["cái","trái","bao nhiêu"],"Cái này bao nhiêu tiền? Còn ba trái xoài thì bao nhiêu?","Ça coûte combien ? Et trois mangues, ça fait combien ?"]
+});
+S(95,{
+ r:["Một ngày của chú Tư","Chú Tư thức dậy lúc bốn giờ sáng. Chú rửa mặt, nấu cà phê rồi mở quán. Khách tới ăn sáng, chú bán tới trưa. Chiều chú về nhà, coi tin tức một chút rồi ngủ sớm.","Chú Tư se lève à quatre heures du matin. Il se lave le visage, prépare le café puis ouvre son échoppe. Les clients viennent prendre le petit-déjeuner, il vend jusqu'à midi. L'après-midi il rentre chez lui, regarde un peu les informations puis se couche tôt.",
+  [["À quelle heure se lève-t-il ?",["quatre heures","six heures","midi"],0],["Que fait-il avant d'ouvrir ?",["il prépare le café","il dort","il lit"],0],["L'après-midi il :",["rentre chez lui","vend encore","part en ville"],0]]],
+ l:["Sáng em thức dậy lúc sáu giờ, ăn sáng rồi đi làm. Tối em nấu cơm, rửa chén rồi coi phim.","Le matin je me lève à six heures, je déjeune puis je vais travailler. Le soir je cuisine, je fais la vaisselle puis je regarde un film.",
+  [["Heure du lever :",["six heures","quatre heures","huit heures"],0],["Le soir, d'abord :",["cuisiner","regarder un film","dormir"],0],["La dernière activité :",["regarder un film","manger","travailler"],0]]],
+ w:["Raconte ta journée en six verbes différents.",["thức dậy","ăn","đi","về","nấu","ngủ"],"Tui thức dậy lúc sáu giờ, tui ăn sáng rồi đi làm. Chiều tui về nhà, tui nấu cơm rồi tui ngủ sớm.","Je me lève à six heures, je déjeune puis je vais travailler. L'après-midi je rentre, je cuisine puis je me couche tôt."],
+ s:["Décris à voix haute ta matinée.",["thức dậy","uống","đi"],"Sáng tui thức dậy lúc sáu giờ, tui uống cà phê rồi tui đi làm.","Le matin je me lève à six heures, je bois un café puis je pars travailler."]
+});
+S(96,{
+ r:["Gia đình làm nghề gì?","Nhà tui ai cũng làm nghề khác nhau. Ba tui là kỹ sư, má tui nghỉ hưu rồi. Anh hai làm tài xế, chị ba là giáo viên. Còn tui làm bác sĩ, tui nói tiếng Pháp với tiếng Việt.","Dans ma famille chacun a un métier différent. Mon père est ingénieur, ma mère est à la retraite. Mon grand frère est chauffeur, ma grande sœur est enseignante. Et moi je suis médecin, je parle français et vietnamien.",
+  [["Métier du père :",["ingénieur","chauffeur","médecin"],0],["La mère :",["est à la retraite","est enseignante","est médecin"],0],["Langues parlées par le narrateur :",["français et vietnamien","anglais et chinois","seulement français"],0]]],
+ l:["Chị là người Pháp hả? Chị làm nghề gì? À, bác sĩ hả, hay quá. Chị nói tiếng Việt giỏi lắm.","Vous êtes française ? Quel est votre métier ? Ah, médecin, super. Vous parlez très bien vietnamien.",
+  [["Nationalité demandée :",["française","vietnamienne","chinoise"],0],["Le métier mentionné :",["médecin","infirmière","enseignante"],0],["Le compliment porte sur :",["son vietnamien","son travail","sa famille"],0]]],
+ w:["Présente trois personnes de ton entourage avec leur métier.",["bác sĩ","giáo viên","làm"],"Ba tui làm kỹ sư, má tui làm giáo viên, còn tui làm bác sĩ.","Mon père est ingénieur, ma mère est enseignante, et moi je suis médecin."],
+ s:["Dis à voix haute ta nationalité, ton métier et les langues que tu parles.",["người Pháp","bác sĩ","tiếng Việt"],"Tui là người Pháp, tui làm bác sĩ, tui nói tiếng Việt một chút.","Je suis française, je suis médecin, je parle un peu vietnamien."]
+});
+S(97,{
+ r:["Vườn nhà ngoại","Nhà ngoại ở miền Tây có một cái vườn lớn. Ngoại nuôi gà, vịt với hai con chó giữ nhà. Sau vườn có cây xoài, cây dừa và nhiều bông. Chiều chiều, chim về hót trên cây, còn muỗi thì nhiều lắm.","La maison de grand-mère dans l'Ouest a un grand jardin. Elle élève des poules, des canards et deux chiens de garde. Derrière le jardin il y a un manguier, un cocotier et beaucoup de fleurs. Chaque soir, les oiseaux reviennent chanter dans les arbres, et il y a beaucoup de moustiques.",
+  [["Animaux élevés par grand-mère :",["poules, canards et chiens","vaches et buffles","chats et oiseaux"],0],["Dans le jardin il y a :",["un manguier et un cocotier","des rizières","un fleuve"],0],["Le soir, il y a beaucoup de :",["moustiques","poissons","fourmis"],0]]],
+ l:["Ngoài vườn có con mèo với mấy con gà. Dưới sông có cá với tôm. Trên cây có chim hót.","Dans le jardin il y a un chat et quelques poules. Dans la rivière il y a des poissons et des crevettes. Dans l'arbre, un oiseau chante.",
+  [["Dans le jardin :",["un chat et des poules","un chien","un buffle"],0],["Dans la rivière :",["poissons et crevettes","canards","fleurs"],0],["Dans l'arbre :",["un oiseau","un chat","une souris"],0]]],
+ w:["Décris le jardin ou le quartier de quelqu'un que tu connais, avec des animaux et des plantes.",["con chó","cây","bông"],"Nhà ngoại có một con chó, sau vườn có cây xoài với nhiều bông.","Chez ma grand-mère il y a un chien, et derrière le jardin un manguier et beaucoup de fleurs."],
+ s:["Nomme à voix haute cinq animaux que tu vois souvent.",["con chó","con mèo","con gà"],"Ở đây có con chó, con mèo, con gà, con chim với con cá.","Ici il y a un chien, un chat, une poule, un oiseau et un poisson."]
+});
+S(98,{
+ r:["Lời dặn của bác sĩ","Bác sĩ dặn chú Năm phải uống thuốc đúng giờ và nên nghỉ ngơi nhiều hơn. Chú không được uống rượu trong hai tuần. Nếu còn mệt thì phải đi tái khám. Bác sĩ nói thêm: « Khỏi lo, bệnh này nhẹ thôi. »","Le médecin recommande à chú Năm de prendre ses médicaments à l'heure et de se reposer davantage. Il n'a pas le droit de boire d'alcool pendant deux semaines. S'il est encore fatigué, il devra revenir en consultation. Le médecin ajoute : « Ne vous inquiétez pas, cette maladie est bénigne. »",
+  [["Ce que chú Năm doit faire :",["prendre ses médicaments à l'heure","arrêter de manger","travailler plus"],0],["Ce qui est interdit :",["boire de l'alcool","marcher","dormir"],0],["Le médecin le rassure en disant :",["Khỏi lo","Không được","Phải đi"],0]]],
+ l:["Em phải nghỉ ở nhà hôm nay, không được đi làm. Em nên uống nhiều nước. Đừng lo, mai sẽ khỏe hơn.","Tu dois rester te reposer à la maison aujourd'hui, tu n'as pas le droit d'aller travailler. Tu devrais boire beaucoup d'eau. Ne t'inquiète pas, demain tu iras mieux.",
+  [["Ce qu'il faut faire :",["rester à la maison","aller travailler","sortir"],0],["Le conseil :",["boire beaucoup d'eau","manger peu","dormir dehors"],0],["« Đừng lo » signifie :",["ne t'inquiète pas","dépêche-toi","reviens"],0]]],
+ w:["Donne trois conseils à quelqu'un qui est malade, avec obligation, conseil et interdiction.",["phải","nên","không được"],"Em phải uống thuốc đúng giờ, em nên nghỉ ở nhà, và em không được uống rượu.","Tu dois prendre tes médicaments à l'heure, tu devrais rester à la maison, et tu n'as pas le droit de boire d'alcool."],
+ s:["Explique à voix haute ce qu'il faut faire et ne pas faire avant une prise de sang.",["phải","không được","nên"],"Sáng mai anh không được ăn, anh phải tới sớm, anh nên uống một chút nước.","Demain matin vous ne devez pas manger, vous devez venir tôt, vous pouvez boire un peu d'eau."]
+});
+S(99,{
+ r:["Thói quen của hai chị em","Chị Lan thường đi chợ mỗi sáng, còn em Mai thì ít khi đi. Mai hay đi siêu thị, khoảng hai lần một tuần. Hai chị em không bao giờ mua nhiều quá, vì tủ lạnh nhỏ. Hôm nào hết rau thì mới đi mua thêm.","Chị Lan va souvent au marché chaque matin, tandis que Mai y va rarement. Mai va souvent au supermarché, environ deux fois par semaine. Les deux sœurs n'achètent jamais trop, car le réfrigérateur est petit. Ce n'est que les jours où il n'y a plus de légumes qu'elles vont en racheter.",
+  [["Lan va au marché :",["chaque matin","une fois par mois","jamais"],0],["Mai va au supermarché :",["environ deux fois par semaine","tous les jours","jamais"],0],["Pourquoi n'achètent-elles pas trop ?",["le réfrigérateur est petit","c'est cher","elles n'aiment pas"],0]]],
+ l:["Tui thường ăn sáng ở nhà, thỉnh thoảng ăn ngoài. Tui ít khi uống cà phê buổi tối. Mỗi tuần tui tập thể dục ba lần.","Je prends souvent le petit-déjeuner à la maison, de temps en temps dehors. Je bois rarement du café le soir. Chaque semaine je fais du sport trois fois.",
+  [["Le petit-déjeuner :",["souvent à la maison","toujours dehors","jamais"],0],["Le café le soir :",["rarement","souvent","toujours"],0],["Sport par semaine :",["trois fois","une fois","jamais"],0]]],
+ w:["Décris tes habitudes de la semaine avec trois fréquences différentes.",["thường","ít khi","mỗi"],"Tui thường dậy sớm, tui ít khi đi ngủ trễ, và mỗi tuần tui học tiếng Việt bốn lần.","Je me lève souvent tôt, je me couche rarement tard, et chaque semaine j'étudie le vietnamien quatre fois."],
+ s:["Au marché, demande à voix haute s'il reste du poisson et combien tu en prends.",["còn","hết","lần"],"Chị ơi, còn cá không? Hết rồi hả? Vậy mai em ghé lần nữa.","Madame, il reste du poisson ? Il n'y en a plus ? Alors je repasserai demain une autre fois."]
+});
+S(100,{
+ r:["Hỏi đường","Dạ, làm ơn cho con hỏi, chợ Bến Thành đi hướng nào ạ? Cô ơi, con xin lỗi đã làm phiền cô. Cô chỉ đường xong, con cảm ơn cô nhiều. Cô cười: « Không có chi con. »","Pardon, puis-je demander par où aller au marché Bến Thành ? Madame, excusez-moi de vous déranger. Une fois qu'elle m'a indiqué le chemin, je la remercie beaucoup. Elle sourit : « De rien, mon enfant. »",
+  [["Ce que demande la personne :",["le chemin du marché","le prix","l'heure"],0],["Elle s'excuse de :",["déranger","être en retard","parler fort"],0],["La réponse au merci :",["Không có chi","Xin lỗi","Tạm biệt"],0]]],
+ l:["Dạ con cảm ơn cô nhiều. Dạ không sao đâu cô. Hẹn gặp lại cô nghen.","Merci beaucoup madame. Ce n'est rien du tout. À bientôt madame.",
+  [["La première phrase est :",["un remerciement","une excuse","un au revoir"],0],["« Không sao » signifie :",["ce n'est rien","c'est grave","merci"],0],["La dernière phrase :",["à bientôt","bonne nuit","pardon"],0]]],
+ w:["Écris un court échange poli : tu déranges quelqu'un, tu demandes un service, tu remercies.",["xin lỗi","làm ơn","cảm ơn"],"Dạ xin lỗi cô, làm ơn chỉ giùm con đường ra chợ. Dạ con cảm ơn cô nhiều.","Excusez-moi madame, pourriez-vous m'indiquer le chemin du marché. Merci beaucoup."],
+ s:["Remercie à voix haute quelqu'un qui t'a aidée, puis prends congé.",["cảm ơn","hẹn gặp lại"],"Dạ con cảm ơn cô nhiều, hẹn gặp lại cô nghen.","Merci beaucoup madame, à bientôt."]
+});
+S(101,{
+ r:["Ở phòng mạch","Chị Hoa tới phòng mạch vì bị sốt và ho đã bốn ngày. Bác sĩ hỏi chị có bị chóng mặt hay buồn nôn không, rồi cho chị đi thử máu. Chị nói chị bị dị ứng với một loại thuốc, nên bác sĩ đổi toa thuốc. Bác sĩ dặn chị tái khám sau một tuần, nếu nặng hơn thì phải nhập viện.","Chị Hoa vient au cabinet parce qu'elle a de la fièvre et tousse depuis quatre jours. Le médecin lui demande si elle a des vertiges ou des nausées, puis l'envoie faire une prise de sang. Elle dit être allergique à un médicament, le médecin change donc l'ordonnance. Il lui recommande une consultation de suivi dans une semaine ; si cela s'aggrave, elle devra être hospitalisée.",
+  [["Depuis combien de temps est-elle malade ?",["quatre jours","un jour","une semaine"],0],["Pourquoi le médecin change-t-il l'ordonnance ?",["elle a une allergie","le médicament est cher","elle refuse"],0],["Que se passe-t-il si cela s'aggrave ?",["elle sera hospitalisée","elle restera chez elle","elle changera de médecin"],0]]],
+ l:["Em bị đau bụng với buồn nôn từ hôm qua. Em có uống thuốc nhưng không bớt. Bác sĩ cho em đi thử máu nha.","J'ai mal au ventre et des nausées depuis hier. J'ai pris un médicament mais ça ne s'améliore pas. Le médecin m'envoie faire une prise de sang.",
+  [["Les symptômes :",["mal au ventre et nausées","fièvre et toux","vertiges seulement"],0],["Le médicament :",["n'a pas fait effet","a bien marché","n'a pas été pris"],0],["Examen prescrit :",["prise de sang","radio","rien"],0]]],
+ w:["Décris une consultation : symptômes, durée, examen et suivi.",["triệu chứng","thử máu","tái khám"],"Bệnh nhân có triệu chứng sốt và ho ba ngày. Tôi cho thử máu, rồi hẹn tái khám sau một tuần.","Le patient présente de la fièvre et une toux depuis trois jours. Je prescris une prise de sang, puis fixe une consultation de suivi dans une semaine."],
+ s:["Explique à voix haute tes symptômes à un médecin.",["bị","sốt","mệt"],"Dạ em bị sốt với ho hai ngày rồi, em thấy mệt lắm.","J'ai de la fièvre et je tousse depuis deux jours, je me sens très fatiguée."]
+});
+S(102,{
+ r:["Căn hộ bị hư","Tháng rồi, máy lạnh trong phòng bị hư sau một lần cúp điện. Chủ nhà kêu thợ tới sửa nhưng thợ nói phải thay bóng đèn và một đoạn ống nước nữa, vì trần nhà bị dột. Hóa đơn tiền điện tháng này cũng cao hơn bình thường. Tui nói chuyện với chủ nhà về hợp đồng và tiền cọc.","Le mois dernier, la climatisation de la chambre est tombée en panne après une coupure de courant. Le propriétaire a appelé un artisan, mais celui-ci a dit qu'il fallait aussi changer une ampoule et une portion de canalisation, car le plafond fuyait. La facture d'électricité de ce mois est également plus élevée que d'habitude. J'ai parlé avec le propriétaire du contrat et de la caution.",
+  [["Cause de la panne :",["une coupure de courant","un dégât des eaux","un déménagement"],0],["Ce qu'il faut changer en plus :",["une ampoule et une canalisation","la porte","la serrure"],0],["Sujet de la discussion avec le propriétaire :",["le contrat et la caution","le loyer seulement","les voisins"],0]]],
+ l:["Alô anh ơi, phòng em bị dột, với lại khóa cửa cũng hư rồi. Anh kêu thợ tới sửa giùm em nha.","Allô, ma chambre a une fuite, et en plus la serrure est cassée. Appelez un artisan pour me réparer ça s'il vous plaît.",
+  [["Premier problème :",["une fuite","une coupure","un bruit"],0],["Deuxième problème :",["la serrure cassée","le ventilateur","l'eau chaude"],0],["Ce qui est demandé :",["appeler un artisan","changer de logement","payer moins"],0]]],
+ w:["Écris un message au propriétaire pour signaler deux pannes et demander une réparation.",["hư","sửa","thợ"],"Anh ơi, máy lạnh với bóng đèn trong phòng bị hư rồi. Anh kêu thợ tới sửa giùm em nha.","Bonjour, la climatisation et l'ampoule de la chambre sont en panne. Pourriez-vous appeler un artisan pour les réparer."],
+ s:["Appelle le propriétaire à voix haute pour signaler une panne et proposer un rendez-vous.",["hư","sửa","chiều mai"],"Dạ anh ơi, máy lạnh bị hư rồi, anh cho thợ tới sửa chiều mai được không?","Bonjour, la climatisation est en panne, pouvez-vous envoyer un artisan la réparer demain après-midi ?"]
+});
+S(103,{
+ r:["Gốc gác gia đình","Gia đình ông bà tôi gốc ở đồng bằng sông Cửu Long, một vùng nhiều kênh rạch của miền Nam. Sau chiến tranh và sau năm thống nhất, nhiều gia đình rời quê lên thành phố tìm việc. Ngày nay, ngôi đình cổ của làng đã thành di tích, còn bảo tàng tỉnh lưu giữ nhiều hình ảnh về truyền thống của vùng.","La famille de mes grands-parents est originaire du Delta du Mékong, une région du Sud riche en canaux. Après la guerre et après l'année de la réunification, beaucoup de familles ont quitté leur village pour chercher du travail en ville. Aujourd'hui, l'ancienne maison communale du village est devenue un site historique, et le musée provincial conserve de nombreuses images des traditions de la région.",
+  [["Région d'origine de la famille :",["le Delta du Mékong","les hauts plateaux","le Nord"],0],["Pourquoi sont-ils partis en ville ?",["chercher du travail","étudier","le climat"],0],["Qu'est devenue la maison communale ?",["un site historique","un musée","une école"],0]]],
+ l:["Quê nội tôi ở miền Trung, còn quê ngoại ở miền Nam. Thủ đô là Hà Nội, nhưng thành phố lớn nhất là Sài Gòn.","Le pays natal de ma famille paternelle est au Centre, celui de ma famille maternelle au Sud. La capitale est Hanoï, mais la plus grande ville est Saïgon.",
+  [["Famille paternelle :",["le Centre","le Sud","le Nord"],0],["La capitale :",["Hanoï","Saïgon","Huế"],0],["La plus grande ville :",["Saïgon","Hanoï","Đà Nẵng"],0]]],
+ w:["Présente une région du Viêt Nam : situation, histoire et patrimoine.",["miền Nam","lịch sử","di tích"],"Miền Nam có đồng bằng sông Cửu Long rộng lớn. Lịch sử vùng này gắn với nhiều cuộc chiến tranh, và ngày nay còn nhiều di tích để tham quan.","Le Sud possède le vaste Delta du Mékong. L'histoire de cette région est liée à de nombreuses guerres, et il reste aujourd'hui beaucoup de sites historiques à visiter."],
+ s:["Explique à voix haute d'où vient ta belle-famille et ce qu'il y a à voir là-bas.",["miền Nam","sông","bảo tàng"],"Gia đình chồng tôi ở miền Nam, gần một con sông lớn, ở đó có một bảo tàng nhỏ rất hay.","La famille de mon mari vit dans le Sud, près d'un grand fleuve, et il y a là-bas un petit musée très intéressant."]
+});
+S(104,{
+ r:["Một đề tài nghiên cứu","Nghiên cứu này tìm hiểu cách các bác sĩ gia đình sử dụng công cụ quản lý béo phì ở trẻ em. Tác giả chọn phương pháp định tính, phỏng vấn ba mươi đối tượng ở nhiều phòng khám khác nhau. Dữ liệu được phân tích theo chủ đề, kết quả cho thấy tỷ lệ sử dụng công cụ còn thấp. Phần kết luận đề nghị thay đổi cách đào tạo và sẽ được công bố trên một tạp chí khoa học.","Cette recherche examine la manière dont les médecins généralistes utilisent les outils de gestion de l'obésité infantile. L'auteure a choisi une méthode qualitative, avec des entretiens auprès de trente sujets dans plusieurs cabinets. Les données sont analysées par thèmes ; les résultats montrent que le taux d'utilisation des outils reste faible. La conclusion propose de modifier la formation et sera publiée dans une revue scientifique.",
+  [["La méthode employée :",["qualitative","quantitative","expérimentale"],0],["Taille de l'échantillon :",["trente personnes","trois personnes","trois cents personnes"],0],["Ce que montrent les résultats :",["un faible taux d'utilisation","un taux élevé","aucun résultat"],0]]],
+ l:["Chúng tôi thu thập dữ liệu bằng bảng câu hỏi, sau đó phân tích thống kê. Tỷ lệ trả lời khoảng bảy mươi phần trăm.","Nous avons recueilli les données par questionnaire, puis réalisé une analyse statistique. Le taux de réponse est d'environ soixante-dix pour cent.",
+  [["Outil de recueil :",["un questionnaire","des entretiens","une observation"],0],["Type d'analyse :",["statistique","qualitative","aucune"],0],["Taux de réponse :",["environ 70 %","environ 17 %","100 %"],0]]],
+ w:["Résume un projet de recherche : question, méthode, échantillon, résultats attendus.",["nghiên cứu","phương pháp","kết quả"],"Nghiên cứu của tôi tìm hiểu thói quen ăn uống của trẻ em. Phương pháp là định lượng, với mẫu hai trăm người. Kết quả sẽ được phân tích bằng thống kê.","Ma recherche porte sur les habitudes alimentaires des enfants. La méthode est quantitative, avec un échantillon de deux cents personnes. Les résultats seront analysés statistiquement."],
+ s:["Présente ton sujet de recherche à voix haute, en trois phrases.",["nghiên cứu","phỏng vấn","kết quả"],"Tôi nghiên cứu về béo phì ở trẻ em. Tôi phỏng vấn các bác sĩ gia đình. Kết quả cho thấy nhiều khó khăn trong thực hành.","J'étudie l'obésité infantile. J'interviewe des médecins généralistes. Les résultats montrent de nombreuses difficultés dans la pratique."]
 });
 
 /* ===== NIVEAU 2 ===== */
@@ -4782,10 +5415,72 @@ const STRUCT={
     ["Chuyên khoa + spécialité",[["Bác sĩ","médecin"],["chuyên khoa","spécialiste"],["tim","du cœur"]],"cardiologue"]],
 89:[["Nom + hóa (processus)",[["số","numérique"],["+ hóa","→ processus"],["= số hóa","numérisation"]],"numérisation"],
     ["Đầu tư + vào + domaine",[["Công ty","l'entreprise"],["đầu tư","investit"],["vào","dans"],["công nghệ","la technologie"]],"L'entreprise investit dans la technologie."]],
+91:[["Có + Verbe + không ?",[["Anh","toi"],["có","oui/non ?"],["khỏe","aller bien"],["không","?"]],"Tu vas bien ?"],
+    ["Sujet + Verbe + chưa ?",[["Ăn cơm","manger"],["chưa","déjà… ?"]],"Tu as déjà mangé ?"],
+    ["Mot interrogatif à la place du mot cherché",[["Anh","tu"],["đi","vas"],["đâu","où"]],"Tu vas où ?"]],
+92:[["Sujet + muốn / thích / cần + Verbe",[["Tui","je"],["muốn","veux"],["đi","aller"]],"Je veux y aller."],
+    ["Sujet + cũng + Verbe",[["Tui","moi"],["cũng","aussi"],["thích","aime"]],"Moi aussi j'aime."],
+    ["A + nhưng + B",[["Tui thích cà phê","j'aime le café"],["nhưng","mais"],["không thích trà","je n'aime pas le thé"]],"J'aime le café mais pas le thé."]],
+93:[["Sujet + tên là + nom",[["Tui","je"],["tên là","m'appelle"],["Blandine","Blandine"]],"Je m'appelle Blandine."],
+    ["Năm nay + sujet + nombre + tuổi",[["Năm nay","cette année"],["tui","je"],["ba mươi","trente"],["tuổi","ans"]],"Cette année j'ai trente ans."],
+    ["Sujet + là người + pays",[["Tui","je"],["là","suis"],["người Pháp","française"]],"Je suis française."]],
+94:[["(Nombre) + Classificateur + Nom + Démonstratif",[["hai","deux"],["trái","(fruits)"],["xoài","mangue"],["này","-ci"]],"ces deux mangues-ci"],
+    ["Cái này + là + gì ?",[["Cái này","ceci"],["là","est"],["gì","quoi"]],"Qu'est-ce que c'est ?"]],
+98:[["Sujet + phải + Verbe",[["Em","tu"],["phải","dois"],["uống thuốc","prendre le médicament"]],"Tu dois prendre le médicament."],
+    ["Sujet + nên + Verbe",[["Anh","tu"],["nên","devrais"],["nghỉ","te reposer"]],"Tu devrais te reposer."],
+    ["Không được + Verbe",[["Không được","interdit de"],["hút thuốc","fumer"]],"Il est interdit de fumer."],
+    ["Khỏi + Verbe (Sud)",[["Khỏi","pas besoin de"],["lo","s'inquiéter"]],"T'inquiète pas !"]],
+99:[["Sujet + adverbe de fréquence + Verbe",[["Tui","je"],["thường","souvent"],["đi chợ","vais au marché"]],"Je vais souvent au marché."],
+    ["Nombre + lần + một + période",[["hai","deux"],["lần","fois"],["một tuần","par semaine"]],"deux fois par semaine"],
+    ["Hết / Còn + rồi",[["Hết","il n'y en a plus"],["rồi","déjà"]],"Il n'y en a plus."]],
+101:[["Sujet + bị + symptôme + durée",[["Em","je"],["bị","ai"],["sốt","de la fièvre"],["hai ngày rồi","depuis deux jours"]],"J'ai de la fièvre depuis deux jours."]],
+102:[["Sujet + bị + hư (Sud)",[["Máy lạnh","la clim"],["bị","subit"],["hư","panne"],["rồi","déjà"]],"La climatisation est en panne."]],
+1:[["Chào + pronom",[["Chào","bonjour"],["anh","toi (homme plus âgé)"]],"Bonjour (à un homme un peu plus âgé)."],
+   ["Dạ / Ừ + réponse",[["Dạ","oui (poli)"],["có","si / oui"]],"Oui (réponse polie à un aîné)."],
+   ["Paire minimale du Sud",[["trà","thé (tr-)"],["↔","vs"],["chà","frotter (ch-)"]],"Au Sud, tr et ch se distinguent nettement."]],
+4:[["Mot du Sud ↔ mot du Nord",[["muỗng","cuillère (Sud)"],["↔","vs"],["thìa","cuillère (Nord)"]],"Les deux sont corrects : c'est la région qui change."],
+   ["Cho + moi + classificateur du Sud",[["Cho","donne"],["tui","moi"],["một tô","un grand bol"],["hủ tiếu","hủ tiếu"]],"Un grand bol de hủ tiếu pour moi."]],
+96:[["Sujet + làm / là + métier",[["Tui","je"],["làm","travaille comme"],["bác sĩ","médecin"]],"Je suis médecin."],
+    ["Sujet + là người + pays",[["Tui","je"],["là","suis"],["người Pháp","française"]],"Je suis française."],
+    ["Sujet + nói + tiếng + langue",[["Tui","je"],["nói","parle"],["tiếng Việt","vietnamien"]],"Je parle vietnamien."]],
+95:[["Sujet + Verbe + Complément",[["Tui","je"],["ăn","mange"],["cơm","du riz"]],"Je mange du riz."],
+    ["Verbe 1 + rồi + Verbe 2",[["ăn sáng","prendre le petit-déjeuner"],["rồi","puis"],["đi làm","aller travailler"]],"Je déjeune puis je pars travailler."]],
+97:[["Con + animal",[["con","(classificateur animal)"],["chó","chien"]],"un chien"],
+    ["Lieu + có + nom",[["Trong vườn","dans le jardin"],["có","il y a"],["nhiều bông","beaucoup de fleurs"]],"Il y a beaucoup de fleurs dans le jardin."]],
+100:[["Dạ + phrase (politesse)",[["Dạ","(respect)"],["con cảm ơn cô","je vous remercie"]],"Merci à vous (à une femme plus âgée)."],
+     ["Làm ơn / Nhờ + personne + Verbe + giùm",[["Nhờ","je demande à"],["cô","vous"],["chỉ đường","indiquer le chemin"],["giùm con","pour moi"]],"Pourriez-vous m'indiquer le chemin ?"],
+     ["Cảm ơn → Không có chi",[["Cảm ơn","merci"],["→","réponse"],["Không có chi","de rien (Sud)"]],"Le Nord répond « không có gì »."]],
+103:[["Quê + sujet + ở + région",[["Quê","le pays natal"],["tui","de moi"],["ở","est à"],["miền Nam","dans le Sud"]],"Je suis originaire du Sud."],
+     ["Sau + événement, + proposition",[["Sau","après"],["năm thống nhất","l'année de la réunification"],["nhiều gia đình lên thành phố","beaucoup de familles sont montées en ville"]],"Après la réunification, beaucoup de familles sont parties en ville."]],
+45:[["Nom + được + Verbe (texte descriptif)",[["Chợ nổi","le marché flottant"],["được","est"],["tổ chức","organisé"],["trên sông","sur le fleuve"]],"Le marché flottant se tient sur le fleuve."],
+    ["Trước đây… ngày nay…",[["Trước đây","autrefois"],["…"," "],["ngày nay","aujourd'hui"]],"Opposer deux époques dans un texte."]],
+48:[["Theo + source, + fait",[["Theo","selon"],["thống kê","les statistiques"],["số lượng tăng đáng kể","le nombre augmente nettement"]],"Selon les statistiques, le nombre augmente nettement."],
+    ["Đáng chú ý là + proposition",[["Đáng chú ý là","il est notable que"],["tỷ lệ này","ce taux"],["vẫn còn cao","reste élevé"]],"Il est notable que ce taux reste élevé."]],
+86:[["Nom + thuộc + domaine",[["Tác phẩm này","cette œuvre"],["thuộc","appartient à"],["văn học hiện đại","la littérature moderne"]],"Cette œuvre relève de la littérature moderne."],
+    ["Sujet + mang đậm + nom",[["Kiến trúc","l'architecture"],["mang đậm","porte fortement"],["bản sắc dân tộc","l'identité nationale"]],"L'architecture porte fortement l'identité nationale."]],
+104:[["Nghiên cứu + này + Verbe + nom",[["Nghiên cứu này","cette recherche"],["tìm hiểu","examine"],["thói quen ăn uống","les habitudes alimentaires"]],"Cette recherche examine les habitudes alimentaires."],
+     ["Dữ liệu + được + Verbe + bằng + méthode",[["Dữ liệu","les données"],["được","sont"],["thu thập","recueillies"],["bằng bảng câu hỏi","par questionnaire"]],"Les données sont recueillies par questionnaire."],
+     ["Kết quả cho thấy + proposition",[["Kết quả","les résultats"],["cho thấy","montrent"],["tỷ lệ còn thấp","que le taux reste faible"]],"Les résultats montrent que le taux reste faible."]],
+90:[["Même sens, registre différent",[["nhìn","regarder (neutre)"],["coi","regarder (Sud)"],["ngắm","contempler"]],"Choisir le verbe selon la nuance voulue."],
+    ["Verbe + một cách + adjectif",[["Anh ấy","il"],["nói","parle"],["một cách","d'une manière"],["nhẹ nhàng","douce"]],"Il parle avec douceur."]],
+10:[["Révision : Có + Verbe + không ?",[["Có","oui/non ?"],["đói","faim"],["không","?"]],"Tu as faim ?"],
+    ["Révision : Cho + moi + classificateur + plat",[["Cho","donne"],["tui","moi"],["một tô","un bol"],["phở","phở"]],"Un bol de phở pour moi."]],
+18:[["Révision : A + adjectif + hơn + B",[["Anh","lui"],["cao","grand"],["hơn","plus que"],["em","moi"]],"Il est plus grand que moi."],
+    ["Révision : Nếu + A + thì + B",[["Nếu","si"],["rảnh","libre"],["thì","alors"],["đi chơi","on sort"]],"Si tu es libre, on sort."]],
+26:[["Révision : Sujet + bị / được + Verbe",[["Tui","je"],["bị","subis"],["phạt","sanction"]],"Je me suis fait verbaliser."],
+    ["Révision : Sujet + nói rằng + proposition",[["Lan","Lan"],["nói rằng","a dit que"],["Lan mệt","elle était fatiguée"]],"Lan a dit qu'elle était fatiguée."]],
+34:[["Révision : Chính + élément + là…",[["Chính","justement"],["anh ấy","lui"],["là người giúp tui","est celui qui m'a aidée"]],"C'est justement lui qui m'a aidée."],
+    ["Révision : Càng + A + càng + B",[["Càng","plus"],["lớn tuổi","on vieillit"],["càng","plus"],["khôn ngoan","on est sage"]],"Plus on vieillit, plus on est sage."]],
+42:[["Révision : registre formel",[["Tôi","je (formel)"],["xin phép","me permets de"],["phát biểu","prendre la parole"]],"Permettez-moi de prendre la parole."],
+    ["Révision : Một mặt + A, mặt khác + B",[["Một mặt","d'un côté"],["giá rẻ","c'est bon marché"],["mặt khác","de l'autre"],["chất lượng không cao","la qualité est moyenne"]],"D'un côté c'est bon marché, de l'autre la qualité est moyenne."]],
+50:[["Révision : Việc + Verbe → nom",[["Việc","le fait de"],["chuyển đổi số","passer au numérique"],["đang diễn ra","est en cours"]],"La transition numérique est en cours."],
+    ["Révision : Nom + hóa",[["đô thị","ville"],["+ hóa","→ processus"],["= đô thị hóa","urbanisation"]],"urbanisation"]],
+66:[["Révision : Tuy + A, nhưng + B",[["Tuy","bien que"],["nhà hơi xa","la maison soit loin"],["nhưng","mais"],["giá hợp lý","le prix est correct"]],"Bien que la maison soit loin, le prix est correct."],
+    ["Révision : Phải chi + A + thì + B",[["Phải chi","si seulement"],["hồi đó tui học","j'avais étudié à l'époque"],["thì","alors"],["giờ đỡ hơn","ce serait plus facile"]],"Si seulement j'avais étudié à l'époque, ce serait plus facile."]],
 };
 
 const isTest=u=>/^Kiểm tra/.test(u.title);
-units.sort((a,b)=>a.level-b.level || (isTest(a)-isTest(b)) || a.id-b.id);
+units.sort((a,b)=>a.level-b.level || (isTest(a)-isTest(b)) || ((a.ord!=null?a.ord:a.id)-(b.ord!=null?b.ord:b.id)) || a.id-b.id);
 units.forEach((u,i)=>{u.num=i+1;});
 const NUM={}; units.forEach(u=>{NUM[u.id]=u.num;});
 function fixRefs(h){ return String(h).replace(/\b([Uu]nité )(\d+)/g,(m,p,n)=>p+(NUM[n]||n)); }
@@ -4844,6 +5539,10 @@ function renderSidebar(){
     wrap.appendChild(label);
     const track = document.createElement('div');
     track.className = 'river-track';
+    const ob=document.createElement('button'); const oc=objCount(lvl);
+    ob.className='unit-item obj-item'+(currentView==='obj'&&objLevel===lvl?' active':'')+(oc.t&&oc.n===oc.t?' done':'');
+    ob.innerHTML=`🎯 Objectifs du niveau ${lvl}<small>${oc.n}/${oc.t} objectifs maîtrisés</small>`;
+    ob.onclick=()=>setObjView(lvl); track.appendChild(ob);
     if(lvl===1){ const z=document.createElement('button'); z.className='unit-item'+(currentView==='tones'?' active':''); z.innerHTML='Unité 0 — Tons & prononciation du Sud<small>Thanh điệu · 6 tons, sons du Sud, exercices</small>'; z.onclick=()=>setView('tones'); track.appendChild(z); }
     units.filter(u=>u.level===lvl).forEach(u=>{
       const btn = document.createElement('button');
@@ -4924,10 +5623,15 @@ function speakCard(id, promptHtml, targets, model, frModel, showModel){
     <div class="fb" id="selffb${id}"></div></div>`;
 }
 
+function forvo(w){
+  w=String(w).split(' / ')[0].replace(/<[^>]+>/g,'').replace(/\(.*?\)/g,'').trim();
+  if(!w||/[…]|\.\.\./.test(w)||w.split(/\s+/).length>3) return '';
+  return `<a class="forvo-btn" href="https://forvo.com/word/${encodeURIComponent(w)}/#vi" target="_blank" rel="noopener noreferrer" title="Écouter des voix de natifs sur Forvo (choisis une voix de Hô Chi Minh-Ville)">🗣 Forvo</a>`;
+}
 function wotdHTML(){
   const cs=allCards('all').filter(c=>c.u.id!==0&&c.v.vn.split(/\s+/).length<=4); if(!cs.length) return '';
   const c=cs[(dayNum()*7919+13)%cs.length], w=c.v.vn.split(' / ')[0];
-  return `<div class="wotd"><div><span class="wotd-tag">✨ Mot du jour</span><div class="wotd-vn">${esc(c.v.vn)} <button class="audio-btn" onclick="speak(${JSON.stringify(w).replace(/"/g,'&quot;')})">🔊</button></div><div class="wotd-fr">${esc(c.v.fr)}${c.v.note?` <span class="mini">· ${esc(c.v.note)}</span>`:''}</div></div><button class="chip" onclick="goUnit(${c.u.id})">Unité ${c.u.num}</button></div>`;
+  return `<div class="wotd"><div><span class="wotd-tag">✨ Mot du jour</span><div class="wotd-vn">${esc(c.v.vn)} <button class="audio-btn" onclick="speak(${JSON.stringify(w).replace(/"/g,'&quot;')})">🔊</button> ${forvo(c.v.vn)}</div><div class="wotd-fr">${esc(c.v.fr)}${c.v.note?` <span class="mini">· ${esc(c.v.note)}</span>`:''}</div></div><button class="chip" onclick="goUnit(${c.u.id})">Unité ${c.u.num}</button></div>`;
 }
 function renderMain(){ renderMain0(); }
 function renderMain0(){
@@ -4935,6 +5639,7 @@ function renderMain0(){
   if(currentView==='cards'){ renderCards(); return; }
   if(currentView==='progress'){ renderProgress(); return; }
   if(currentView==='errors'){ renderErrors(); return; }
+  if(currentView==='obj'){ renderObj(); return; }
   if(currentView==='tones'){ renderTones(); return; }
   if(currentView==='search'){ renderSearch(); return; }
   if(currentView==='notebook'){ renderNotebook(); return; }
@@ -4947,7 +5652,7 @@ function renderMain0(){
 
   let vocabRows = u.vocab.map(v=>`
     <tr>
-      <td><div class="vn-cell"><button class="audio-btn" onclick="speak(_tts[${T(v.vn)}])" title="Écouter">🔊</button><span class="vn-word">${v.vn}</span></div></td>
+      <td><div class="vn-cell"><button class="audio-btn" onclick="speak(_tts[${T(v.vn)}])" title="Écouter">🔊</button><span class="vn-word">${v.vn}</span>${forvo(v.vn)}</div></td>
       <td class="ipa mono">${v.ipa||''}</td>
       <td>${v.fr}</td>
       <td class="note">${v.note||''}</td>
@@ -4970,7 +5675,7 @@ function renderMain0(){
 
   let listenHtml = u.ex.listen.map((l,i)=>`
     <div class="exercise">
-      <div class="q">${i+1}. <button class="big-audio-btn" onclick="speak(_tts[${T(l.word)}])" style="margin-bottom:0;">🔊 Écouter le mot</button></div>
+      <div class="q">${i+1}. <button class="big-audio-btn" onclick="speak(_tts[${T(l.word)}])" style="margin-bottom:0;">🔊 Écouter le mot</button> <button class="ghost-btn" onclick="speak(_tts[${T(l.word)}],0.6)">🐢 Lent</button>${l.q?`<div class="mini" style="margin-top:6px">${l.q}</div>`:''}</div>
       <div class="options">
         ${l.options.map((opt,j)=>`<button class="opt-btn" data-ex="listen${i}" data-idx="${j}" onclick="checkListen(${i},${j})">${opt}</button>`).join('')}
       </div>
@@ -5306,14 +6011,14 @@ function doSearch(q){
   hits.sort((a,b)=>a.s-b.s);
   const shown=hits.slice(0,60);
   box.innerHTML=(shown.length?`<div class="mini" style="margin:10px 0">${hits.length} résultat(s)${hits.length>60?' (60 affichés)':''}</div>`:'<div class="mini" style="margin-top:12px">Aucun résultat. Tu peux l\'ajouter à ton carnet.</div>')
-    +shown.map(h=>`<div class="srch"><div><b>${esc(h.v.vn)}</b> <button class="audio-btn" onclick="speak(${JSON.stringify(h.v.vn.split(' / ')[0]).replace(/"/g,'&quot;')})">🔊</button><div>${esc(h.v.fr)}</div>${h.v.note?`<div class="mini">${esc(h.v.note)}</div>`:''}</div>
+    +shown.map(h=>`<div class="srch"><div><b>${esc(h.v.vn)}</b> <button class="audio-btn" onclick="speak(${JSON.stringify(h.v.vn.split(' / ')[0]).replace(/"/g,'&quot;')})">🔊</button> ${forvo(h.v.vn)}<div>${esc(h.v.fr)}</div>${h.v.note?`<div class="mini">${esc(h.v.note)}</div>`:''}</div>
       ${h.u?`<button class="chip" onclick="goUnit(${h.u.id})">Unité ${h.u.num}</button>`:'<span class="res-tag">Carnet</span>'}</div>`).join('');
 }
 
 function renderNotebook(){
   stopMedia(); _tts=[]; window._score={correct:0,total:1,answered:0};
   const notes=loadNotes();
-  const list=notes.map((x,i)=>`<div class="srch"><div><b>${esc(x.vn)}</b> <button class="audio-btn" onclick="speak(${JSON.stringify(x.vn).replace(/"/g,'&quot;')})">🔊</button><div>${esc(x.fr)}</div>${x.note?`<div class="mini">${esc(x.note)}</div>`:''}${x.src?`<div class="mini">Unité ${(units.find(z=>z.id===x.src)||{}).num||''}</div>`:''}</div><button class="ghost-btn" onclick="delNote(${i})">Supprimer</button></div>`).join('');
+  const list=notes.map((x,i)=>`<div class="srch"><div><b>${esc(x.vn)}</b> <button class="audio-btn" onclick="speak(${JSON.stringify(x.vn).replace(/"/g,'&quot;')})">🔊</button> ${forvo(x.vn)}<div>${esc(x.fr)}</div>${x.note?`<div class="mini">${esc(x.note)}</div>`:''}${x.src?`<div class="mini">Unité ${(units.find(z=>z.id===x.src)||{}).num||''}</div>`:''}</div><button class="ghost-btn" onclick="delNote(${i})">Supprimer</button></div>`).join('');
   document.getElementById('main').innerHTML=fixRefs(`
     <div class="unit-header"><span class="eyebrow">Sổ tay · Carnet</span><h2>Mon carnet de mots</h2><p class="sub">Note ici les mots et phrases entendus en famille ou en vidéo. Ils sont ajoutés automatiquement à tes cartes mémoire.</p></div>
     <section class="block"><h3>Ajouter</h3>
@@ -5330,6 +6035,224 @@ function addNote(){
   const n=loadNotes(); n.unshift({vn:vn,fr:fr,note:note}); saveNotes(n); renderNotebook();
 }
 function delNote(i){ const n=loadNotes(); n.splice(i,1); saveNotes(n); renderNotebook(); }
+
+/* ===================== OBJECTIFS PAR NIVEAU ===================== */
+const OBJ={
+1:[["Je sais faire",[
+ ["Saluer et prendre congé selon l'âge de la personne",[2]],
+ ["Me présenter : nom, âge, métier, nationalité",[93,96]],
+ ["Choisir le bon pronom (anh, chị, em, con, cô, chú…)",[2]],
+ ["Compter et demander un prix au marché",[3]],
+ ["Commander à manger et à boire dans un quán",[6,67]],
+ ["Poser une question simple : oui/non, où, quoi, quand, combien",[91]],
+ ["Dire l'heure, les jours et les dates",[8]],
+ ["Dire où se trouve un objet ou une personne",[9]],
+ ["Décrire une chose : couleur, taille, qualité",[69]],
+ ["Dire ce que je veux, ce que j'aime, ce dont j'ai besoin",[92]],
+ ["Parler de ma famille et présenter quelqu'un",[7]]]],
+ ["Grammaire",[
+ ["Reconnaître les 6 tons à l'écrit et les 5 tons du Sud à l'oral",[0,1]],
+ ["Les sons propres au Sud : tr/ch, s/x, d/gi/r, v",[0,1]],
+ ["Phrase de base : sujet + verbe + complément",[5]],
+ ["La négation avec « không » devant le verbe",[5]],
+ ["La question fermée « có … không? »",[91,5]],
+ ["La question « … chưa? » et les réponses « rồi / chưa »",[91]],
+ ["Les particules finales nha, nghen, hen, nè",[5]],
+ ["Les classificateurs cái, con, trái, ly, cuốn",[94]],
+ ["Les démonstratifs này, đó, kia",[94]],
+ ["La possession avec « của »",[7]],
+ ["« cũng » placé avant le verbe",[92]]]],
+ ["Vocabulaire",[
+ ["Les nombres et l'argent",[3]],
+ ["La nourriture et les boissons du Sud",[67,6]],
+ ["La famille et les liens de parenté",[7]],
+ ["Le corps, la santé de base et les vêtements",[68]],
+ ["Les couleurs, la météo et les adjectifs courants",[69]],
+ ["20 verbes du quotidien",[95]],
+ ["Les métiers, les pays et les langues",[96]],
+ ["Les animaux et les plantes autour de la maison",[97]],
+ ["Les mots qui changent entre le Nord et le Sud",[4]]]]],
+2:[["Je sais faire",[
+ ["Décrire une personne et comparer deux choses",[11]],
+ ["Situer une action dans le passé, le présent et le futur",[12]],
+ ["Demander et donner un itinéraire",[13]],
+ ["Raconter une suite d'événements",[14]],
+ ["Donner un ordre, une suggestion, un conseil",[15]],
+ ["Dire ce que je sais faire et ce qui est permis",[16]],
+ ["Dire ce que je dois, devrais ou ne dois pas faire",[98]],
+ ["Dire à quelle fréquence je fais quelque chose",[99]],
+ ["Réserver une chambre et voyager",[72]],
+ ["Faire des achats, négocier un prix, me faire rendre la monnaie",[73]],
+ ["Être poli : remercier, m'excuser, demander un service",[100]]]],
+ ["Grammaire",[
+ ["L'adjectif après le nom, sans verbe « être »",[11]],
+ ["Les comparatifs hơn, bằng, nhất",[11]],
+ ["Les marqueurs đã, đang, sẽ, rồi",[12]],
+ ["Les paires de connecteurs vì…nên, nếu…thì, tuy…nhưng",[14]],
+ ["L'impératif : hãy, đi, đừng",[15]],
+ ["Les modaux có thể, biết, được",[16]],
+ ["Obligation et interdiction : phải, nên, không được, khỏi",[98]],
+ ["Les adverbes de fréquence avant le verbe",[99]],
+ ["Les quantités : nhiều, ít, vài, đủ, hết, còn",[99]]]],
+ ["Vocabulaire",[
+ ["Les verbes essentiels du quotidien",[70]],
+ ["La vie quotidienne et les habitudes",[17]],
+ ["La maison, le quartier et la ville",[71]],
+ ["Le voyage et l'hébergement",[72]],
+ ["Les achats et l'argent",[73]],
+ ["Les déplacements et les directions",[13]],
+ ["Les formules de politesse du Sud",[100]]]]],
+3:[["Je sais faire",[
+ ["Raconter un événement passé en détail",[22,24]],
+ ["Rapporter les paroles de quelqu'un",[20]],
+ ["Exprimer mes émotions avec nuance",[25]],
+ ["Parler de mon travail et de mes études",[74,77]],
+ ["Décrire la nature et la vie du Delta",[75]],
+ ["Parler de mes amis, du couple, des fêtes de famille",[76]],
+ ["Décrire mes symptômes et comprendre un médecin",[101]],
+ ["Demander confirmation et nuancer ce que je dis",[23]]]],
+ ["Grammaire",[
+ ["Le passif avec bị et được",[19]],
+ ["Le causatif làm cho, khiến",[19]],
+ ["Le discours rapporté avec rằng et xem",[20]],
+ ["Les mots redoublés (từ láy) et les intensificateurs",[21]],
+ ["Les compléments de résultat et de direction",[22]],
+ ["Les questions-tags : phải không, hén",[23]],
+ ["Les verbes en série et les verbes composés",[24]]]],
+ ["Vocabulaire",[
+ ["Les émotions et les états psychologiques",[25]],
+ ["Les métiers et la vie de bureau",[74]],
+ ["La nature, les fruits et les animaux du Delta",[75]],
+ ["Les relations sociales et les fêtes",[76]],
+ ["L'école et les études",[77]],
+ ["La santé et la consultation médicale",[101]]]]],
+4:[["Je sais faire",[
+ ["Mettre en relief une information",[27]],
+ ["Écrire dans un registre soutenu",[28]],
+ ["Utiliser des expressions figées courantes",[29]],
+ ["Organiser un texte avec des connecteurs logiques",[28]],
+ ["Parler de société et d'environnement",[33]],
+ ["Décrire une recette et parler de cuisine",[78]],
+ ["Parler de sport, de loisirs et de culture",[79]],
+ ["Gérer mon logement : contrat, factures, réparations",[102]]]],
+ ["Grammaire",[
+ ["Les structures d'insistance : chính, ngay cả, chỉ có",[27]],
+ ["Les connecteurs écrits : do đó, mặc dù, tuy nhiên",[28]],
+ ["La nominalisation avec sự et việc",[29]],
+ ["Les prépositions complexes : đối với, về phía, nhờ vào",[30]],
+ ["La comparaison progressive càng…càng",[31]],
+ ["La structure thème-commentaire avec « thì »",[32]]]],
+ ["Vocabulaire",[
+ ["La société et l'environnement",[33]],
+ ["La cuisine : techniques, ingrédients, goûts",[78]],
+ ["Le sport, les loisirs et les spectacles",[79]],
+ ["Le téléphone, Internet et les applications",[80]],
+ ["Le logement, les services et les réparations",[102]]]]],
+5:[["Je sais faire",[
+ ["Passer du registre familier au registre formel",[35]],
+ ["Comprendre et utiliser des proverbes courants",[36]],
+ ["Construire des phrases longues et enchâssées",[37]],
+ ["Argumenter et défendre un point de vue",[39]],
+ ["Parler d'économie et de finances",[81]],
+ ["Discuter de politique et de société",[82]],
+ ["Décrire un caractère avec finesse",[83]],
+ ["Parler de l'histoire et de la géographie du pays",[103]]]],
+ ["Grammaire",[
+ ["Les registres : tui/tôi, anh-chị/quý vị",[35]],
+ ["Les phrases complexes à plusieurs propositions",[37]],
+ ["Le passif nuancé et l'inversion emphatique",[38]],
+ ["Les connecteurs d'argumentation",[39]],
+ ["Les idiomes et les métaphores",[36,40]]]],
+ ["Vocabulaire",[
+ ["La culture et les coutumes",[41]],
+ ["L'économie, la banque et l'entreprise",[81]],
+ ["Les institutions et les débats publics",[82]],
+ ["Le caractère et les émotions subtiles",[83]],
+ ["L'histoire et la géographie du Viêt Nam",[103]]]]],
+6:[["Je sais faire",[
+ ["Saisir les nuances d'attitude dans une phrase",[43]],
+ ["Lire un texte académique ou journalistique",[45,48]],
+ ["Reconnaître les racines sino-vietnamiennes d'un mot",[44,46]],
+ ["Comprendre la langue classique et la poésie",[47]],
+ ["Analyser la structure d'un texte",[48]],
+ ["Lire un article scientifique ou un rapport",[104]]]],
+ ["Grammaire",[
+ ["Les particules modales avancées",[43]],
+ ["Le vocabulaire Hán Việt et le registre académique",[44]],
+ ["Les préfixes et suffixes sino-vietnamiens",[46]],
+ ["La grammaire de la poésie classique (lục bát)",[47]],
+ ["Les procédés d'analyse de texte",[45,48]]]],
+ ["Vocabulaire",[
+ ["Le vocabulaire académique et spécialisé",[49]],
+ ["Le droit, la justice et les institutions",[84]],
+ ["La science, la technologie et le climat",[85]],
+ ["Les arts, la littérature et l'histoire",[86]],
+ ["La recherche, la méthode et les statistiques",[104]]]]],
+7:[["Je sais faire",[
+ ["Concéder, restreindre, poser une exception",[51]],
+ ["Nuancer une opinion et contredire poliment",[52]],
+ ["Exprimer un regret ou une situation irréelle",[53]],
+ ["Saisir l'ironie, l'euphémisme et l'argot de Sài Gòn",[55]],
+ ["Écrire une lettre ou un email professionnel",[57]],
+ ["Mener une réunion et négocier",[58]],
+ ["Conduire une consultation médicale complète",[59,88]],
+ ["Faire une démarche administrative",[60]],
+ ["Lire la presse et suivre un journal télévisé",[61]],
+ ["Structurer un exposé et une dissertation",[62]],
+ ["Lire de la littérature et en parler",[63]],
+ ["Comprendre les accents du Nord, du Centre et du Sud",[64]]]],
+ ["Grammaire",[
+ ["Concession et restriction : tuy, dù, trừ phi, miễn là",[51]],
+ ["L'irréel : phải chi, giá mà",[53]],
+ ["Les particules d'attitude du Sud : chớ, mà, đâu, nghen",[54]],
+ ["L'ironie et l'euphémisme",[55]],
+ ["Le style administratif et épistolaire",[57]],
+ ["Les nuances verbales et les synonymes",[90]]]],
+ ["Vocabulaire",[
+ ["Les idiomes imagés du quotidien",[87,56]],
+ ["Le vocabulaire médical clinique",[88,59]],
+ ["Les affaires, la comptabilité et la stratégie",[89,58]],
+ ["L'administration et le droit",[60]],
+ ["La presse et l'actualité",[61]],
+ ["La littérature et les figures de style",[63]],
+ ["Le monde contemporain : numérique, économie, ville",[65]]]]]
+};
+let objLevel=1;
+function loadObj(){ try{ return JSON.parse(localStorage.getItem('vn_obj')||'{}'); }catch(e){ return {}; } }
+function toggleObj(k){ const o=loadObj(); if(o[k]) delete o[k]; else o[k]=1; try{ localStorage.setItem('vn_obj',JSON.stringify(o)); }catch(e){} markStudy(); renderAll(); }
+function objCount(lvl){
+  const o=loadObj(); let n=0,t=0;
+  (OBJ[lvl]||[]).forEach((grp,gi)=>grp[1].forEach((it,ii)=>{ t++; if(o['L'+lvl+'-'+gi+'-'+ii]) n++; }));
+  return {n,t};
+}
+function setObjView(l){ objLevel=l; currentView='obj'; renderAll(); window.scrollTo(0,0); const s=document.getElementById('sidebar'); if(s) s.classList.remove('open'); }
+function objRefs(ids){
+  if(!ids||!ids.length) return '';
+  return '<span class="obj-refs">'+ids.map(id=>{
+    if(id===0) return `<button type="button" class="obju" onclick="event.preventDefault();setView('tones')">Unité\u00A00</button>`;
+    const u=units.find(x=>x.id===id); if(!u) return '';
+    return `<button type="button" class="obju" title="${esc(u.title)}" onclick="event.preventDefault();goUnit(${id})">Unité\u00A0${u.num}</button>`;
+  }).join('')+'</span>';
+}
+function renderObj(){
+  stopMedia(); _tts=[]; window._score={correct:0,total:1,answered:0};
+  const lvl=objLevel, o=loadObj(), c=objCount(lvl), pct=c.t?Math.round(c.n/c.t*100):0;
+  const us=units.filter(u=>u.level===lvl), done=us.filter(u=>doneUnits.has(u.id)).length;
+  const grps=(OBJ[lvl]||[]).map((grp,gi)=>`<section class="block"><h3>${grp[0]}</h3>
+    <div class="obj-list">${grp[1].map((it,ii)=>{ const k='L'+lvl+'-'+gi+'-'+ii; const on=!!o[k];
+      return `<label class="obj-row ${on?'on':''}"><input type="checkbox" ${on?'checked':''} onchange="toggleObj('${k}')"><span class="obj-body"><span>${esc(it[0])}</span>${objRefs(it[1])}</span></label>`; }).join('')}</div></section>`).join('');
+  document.getElementById('main').innerHTML=fixRefs(`
+    <div class="unit-header"><span class="eyebrow">Mục tiêu · Objectifs</span><h2>Objectifs — ${esc(levelNames[lvl])}</h2>
+      <p class="sub">Chaque objectif indique l'unité où il est traité : touche le numéro pour y aller. Coche-le quand tu l'as vu <b>et</b> que tu penses le maîtriser. Reviens sur cette page en fin de niveau : ce qui reste décoché te dit quoi réviser.</p></div>
+    <div class="stat-grid">
+      <div class="stat"><b>${c.n}/${c.t}</b><span>objectifs maîtrisés (${pct} %)</span></div>
+      <div class="stat"><b>${done}/${us.length}</b><span>unités validées de ce niveau</span></div></div>
+    <div class="goal"><div class="goal-top"><span>Progression du niveau</span><b>${pct} %</b></div><div class="bar"><i style="width:${pct}%"></i></div></div>
+    ${grps}
+    <div class="callout">Un objectif coché n'est pas figé : si tu bloques dessus plus tard, décoche-le et refais l'unité correspondante.</div>
+    <div style="margin-top:14px"><button class="ghost-btn" onclick="setObjView(${Math.max(1,lvl-1)})" ${lvl===1?'disabled':''}>← Niveau ${lvl-1}</button>
+      <button class="ghost-btn" onclick="setObjView(${Math.min(7,lvl+1)})" ${lvl===7?'disabled':''}>Niveau ${lvl+1} →</button></div>`);
+}
 
 /* ===================== CARTES MÉMOIRE ===================== */
 const BOX_DAYS=[0,1,3,7,14,30,60];
@@ -5416,7 +6339,7 @@ function renderCards(){
     if(d==='vf') front=`<div class="card-vn">${esc(vn)}</div>`;
     else if(d==='fv') front=`<div class="card-fr">${esc(fr)}</div>`;
     else front=`<button class="big-audio-btn" onclick="speak(_tts[${T(vn.split(' / ')[0])}])">🔊 Écouter</button><div class="mini">Qu'est-ce que tu entends ?</div>`;
-    const back=`<div class="card-vn">${esc(vn)} <button class="audio-btn" onclick="speak(_tts[${T(vn.split(' / ')[0])}])">🔊</button></div><div class="card-fr">${esc(fr)}</div>${c.v.note?`<div class="mini">${esc(c.v.note)}</div>`:''}${(()=>{const e=exampleFor(c);return e?`<div class="card-ex"><div class="mini">Exemple</div><div>${esc(e.vn)} <button class="audio-btn" onclick="speak(${JSON.stringify(e.vn).replace(/"/g,'&quot;')})">🔊</button></div><div class="mini">${esc(e.fr)}</div></div>`:'';})()}<div class="mini" style="margin-top:6px">${c.u.num==='✎'?'':'Unité '}${c.u.num} — ${esc(c.u.title)}</div>`;
+    const back=`<div class="card-vn">${esc(vn)} <button class="audio-btn" onclick="speak(_tts[${T(vn.split(' / ')[0])}])">🔊</button></div><div>${forvo(vn)}</div><div class="card-fr">${esc(fr)}</div>${c.v.note?`<div class="mini">${esc(c.v.note)}</div>`:''}${(()=>{const e=exampleFor(c);return e?`<div class="card-ex"><div class="mini">Exemple</div><div>${esc(e.vn)} <button class="audio-btn" onclick="speak(${JSON.stringify(e.vn).replace(/"/g,'&quot;')})">🔊</button></div><div class="mini">${esc(e.fr)}</div></div>`:'';})()}<div class="mini" style="margin-top:6px">${c.u.num==='✎'?'':'Unité '}${c.u.num} — ${esc(c.u.title)}</div>`;
     body=`<div class="card-progress"><span>${_cards.i+1} / ${total}</span><div class="bar"><i style="width:${Math.round(_cards.i/total*100)}%"></i></div></div>
       <div class="flashcard" ${_cards.flipped?'':'onclick="flipCard()"'}>
         <div class="card-front">${front}</div>
