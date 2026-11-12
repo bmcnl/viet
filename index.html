@@ -315,6 +315,11 @@ table.plan-table td{padding:10px;border-bottom:1px solid var(--paper-2);vertical
 .goal .bar i{display:block;height:100%;background:var(--turmeric);}
 .card-ex{margin-top:14px;padding:10px 12px;background:var(--paper);border-radius:10px;text-align:left;font-size:.95rem;width:100%;}
 .res-lvl{display:inline-block;font-size:.74rem;font-weight:700;color:var(--river);background:var(--paper);border-radius:8px;padding:2px 8px;margin:2px 0 6px;}
+.nb-list{margin:10px 0 14px;max-height:340px;overflow-y:auto;border:1px solid var(--paper-2);border-radius:10px;}
+.nb-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--paper-2);font-size:.9rem;cursor:pointer;}
+.nb-row small{margin-left:auto;color:var(--ink-soft);font-size:.72rem;}
+.chk-all{display:flex;gap:8px;align-items:center;font-weight:600;font-size:.88rem;margin:8px 0;}
+.nb-row input,.chk-all input{width:18px;height:18px;flex-shrink:0;}
 
 
 html[data-theme="dark"]{--paper:#141F1B;--paper-2:#26342E;--river:#36978B;--river-light:#4C9E94;--ink:#E9E5D6;--ink-soft:#A8B5AE;--card:#1C2A25;--ok-bg:#1F3A2A;--bad-bg:#3E2323;--head:#CDE9E3;--turmeric:#E0A526;--clay:#E08A6A;color-scheme:dark;}
@@ -5063,6 +5068,8 @@ function renderMain0(){
       </div>
     </section>
 
+    ${addNoteBlock(u)}
+
     <div style="display:flex;justify-content:space-between;margin-top:10px;">
       <button class="check-btn" style="background:var(--river-light)" onclick="goRel(-1)" ${u.id===units[0].id?'disabled':''}>← Unité précédente</button>
       <button class="check-btn" onclick="goRel(1)" ${u.id===units[units.length-1].id?'disabled':''}>Unité suivante →</button>
@@ -5190,6 +5197,29 @@ function streakInfo(){
   while(d.has(x)){ s++; x--; }
   return {streak:s,today:d.has(t),total:d.size,last7:[6,5,4,3,2,1,0].map(i=>d.has(t-i))};
 }
+/* ---------- ajout du vocabulaire d'une unité au carnet ---------- */
+function addNoteBlock(u){
+  if(isTest(u)) return '';
+  const have=new Set(loadNotes().map(x=>x.vn));
+  const rows=u.vocab.map((v,i)=>({v,i})).filter(o=>!(o.v.note&&/^unité \d+$/i.test(o.v.note.trim())));
+  if(!rows.length) return '';
+  return `<section class="block"><h3>✏️ Ajouter du vocabulaire à mon carnet</h3>
+    <p class="mini">Coche les mots que tu veux garder dans ton carnet. Ils restent dans tes cartes mémoire, sans doublon, avec ta progression conservée.</p>
+    <label class="chk-all"><input type="checkbox" onchange="document.querySelectorAll('.nbchk:not(:disabled)').forEach(c=>c.checked=this.checked)"> Tout sélectionner</label>
+    <div class="nb-list">${rows.map(o=>`<label class="nb-row"><input type="checkbox" class="nbchk" data-i="${o.i}" ${have.has(o.v.vn)?'checked disabled':''}><span><b>${esc(o.v.vn)}</b> — ${esc(o.v.fr)}</span>${have.has(o.v.vn)?'<small>déjà dans le carnet</small>':''}</label>`).join('')}</div>
+    <button class="check-btn" onclick="addUnitToNotes(${u.id})">+ Ajouter la sélection au carnet</button>
+    <div id="nbMsg" class="mini" style="margin-top:8px"></div></section>`;
+}
+function addUnitToNotes(uid){
+  const u=units.find(x=>x.id===uid), n=loadNotes(), have=new Set(n.map(x=>x.vn)); let c=0;
+  document.querySelectorAll('.nbchk:checked:not(:disabled)').forEach(el=>{
+    const v=u.vocab[parseInt(el.dataset.i)]; if(!v||have.has(v.vn)) return;
+    n.push({vn:v.vn,fr:v.fr,note:v.note||'',k:u.id+'|'+v.vn,src:u.id}); have.add(v.vn); c++; });
+  saveNotes(n);
+  const m=document.getElementById('nbMsg'); if(m) m.textContent=c?c+' mot(s) ajouté(s) à ton carnet ✓':'Rien de nouveau à ajouter.';
+  document.querySelectorAll('.nbchk:checked').forEach(el=>{ el.disabled=true; });
+  renderSidebar();
+}
 function loadNotes(){ try{ return JSON.parse(localStorage.getItem('vn_notes')||'[]'); }catch(e){ return []; } }
 function saveNotes(n){ try{ localStorage.setItem('vn_notes',JSON.stringify(n)); }catch(e){} }
 function loadErr(){ try{ return JSON.parse(localStorage.getItem('vn_err')||'[]'); }catch(e){ return []; } }
@@ -5272,7 +5302,7 @@ function doSearch(q){
   const hits=[];
   units.forEach(u=>{ if(isTest(u)) return; u.vocab.forEach(v=>{ if(v.note && /^unité \d+$/i.test(v.note.trim())) return;
     const hay=norm(v.vn+' '+v.fr+' '+(v.note||'')); if(hay.includes(n)){ const s=norm(v.vn)===n?0:norm(v.vn).startsWith(n)?1:norm(v.fr).includes(n)?2:3; hits.push({s,u,v}); } }); });
-  loadNotes().forEach(x=>{ if(norm(x.vn+' '+x.fr+' '+(x.note||'')).includes(n)) hits.push({s:1,u:null,v:x}); });
+  loadNotes().forEach(x=>{ if(x.k) return; if(norm(x.vn+' '+x.fr+' '+(x.note||'')).includes(n)) hits.push({s:1,u:null,v:x}); });
   hits.sort((a,b)=>a.s-b.s);
   const shown=hits.slice(0,60);
   box.innerHTML=(shown.length?`<div class="mini" style="margin:10px 0">${hits.length} résultat(s)${hits.length>60?' (60 affichés)':''}</div>`:'<div class="mini" style="margin-top:12px">Aucun résultat. Tu peux l\'ajouter à ton carnet.</div>')
@@ -5283,7 +5313,7 @@ function doSearch(q){
 function renderNotebook(){
   stopMedia(); _tts=[]; window._score={correct:0,total:1,answered:0};
   const notes=loadNotes();
-  const list=notes.map((x,i)=>`<div class="srch"><div><b>${esc(x.vn)}</b> <button class="audio-btn" onclick="speak(${JSON.stringify(x.vn).replace(/"/g,'&quot;')})">🔊</button><div>${esc(x.fr)}</div>${x.note?`<div class="mini">${esc(x.note)}</div>`:''}</div><button class="ghost-btn" onclick="delNote(${i})">Supprimer</button></div>`).join('');
+  const list=notes.map((x,i)=>`<div class="srch"><div><b>${esc(x.vn)}</b> <button class="audio-btn" onclick="speak(${JSON.stringify(x.vn).replace(/"/g,'&quot;')})">🔊</button><div>${esc(x.fr)}</div>${x.note?`<div class="mini">${esc(x.note)}</div>`:''}${x.src?`<div class="mini">Unité ${(units.find(z=>z.id===x.src)||{}).num||''}</div>`:''}</div><button class="ghost-btn" onclick="delNote(${i})">Supprimer</button></div>`).join('');
   document.getElementById('main').innerHTML=fixRefs(`
     <div class="unit-header"><span class="eyebrow">Sổ tay · Carnet</span><h2>Mon carnet de mots</h2><p class="sub">Note ici les mots et phrases entendus en famille ou en vidéo. Ils sont ajoutés automatiquement à tes cartes mémoire.</p></div>
     <section class="block"><h3>Ajouter</h3>
@@ -5311,13 +5341,15 @@ function getSet(){ let s={}; try{ s=JSON.parse(localStorage.getItem('vn_cards_se
 function setSet(k,v){ const s=getSet(); s[k]=(k==='newPerDay')?parseInt(v):v; try{ localStorage.setItem('vn_cards_set',JSON.stringify(s)); }catch(e){} renderMain(); }
 function allCards(levelFilter){
   const out=[];
+  const inNotes=new Set(loadNotes().map(x=>x.vn));
   units.forEach(u=>{
     if(isTest(u)) return;
     if(levelFilter==='carnet') return;
-    if(levelFilter && levelFilter!=='all' && String(u.level)!==String(levelFilter)) return;
-    u.vocab.forEach(v=>{ if(v.note && /^unité \d+$/i.test(v.note.trim())) return; out.push({key:u.id+'|'+v.vn,u:u,v:v}); });
+    if(levelFilter==='done' && !doneUnits.has(u.id)) return;
+    if(levelFilter && levelFilter!=='all' && levelFilter!=='done' && String(u.level)!==String(levelFilter)) return;
+    u.vocab.forEach(v=>{ if(v.note && /^unité \d+$/i.test(v.note.trim())) return; if(inNotes.has(v.vn) && (!levelFilter||levelFilter==='all')) return; out.push({key:u.id+'|'+v.vn,u:u,v:v}); });
   });
-  if(!levelFilter||levelFilter==='all'||levelFilter==='carnet') loadNotes().forEach(x=>out.push({key:'carnet|'+x.vn,u:{num:'✎',title:'Mon carnet',id:0},v:x}));
+  if(!levelFilter||levelFilter==='all'||levelFilter==='carnet') loadNotes().forEach(x=>out.push({key:x.k||('carnet|'+x.vn),u:x.src?{num:(units.find(z=>z.id===x.src)||{}).num||'✎',title:'Mon carnet',id:x.src}:{num:'✎',title:'Mon carnet',id:0},v:x}));
   return out;
 }
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
@@ -5413,7 +5445,7 @@ function renderCards(){
         <div class="stat"><b>${s.seen}</b><span>déjà vues</span></div></div>
       <section class="block"><h3>Ta session</h3>
         <div class="set-grid">
-          <label>Niveau ${sel('level',[['all','Tous les niveaux'],['carnet','Mon carnet seulement'],[1,'Niveau 1 (A1)'],[2,'Niveau 2 (A2)'],[3,'Niveau 3 (B1)'],[4,'Niveau 4 (B1+)'],[5,'Niveau 5 (B2)'],[6,'Niveau 6 (B2+)'],[7,'Niveau 7 (C1)']])}</label>
+          <label>Niveau ${sel('level',[['all','Tous les niveaux'],['carnet','Mon carnet seulement'],['done','Unités terminées seulement'],[1,'Niveau 1 (A1)'],[2,'Niveau 2 (A2)'],[3,'Niveau 3 (B1)'],[4,'Niveau 4 (B1+)'],[5,'Niveau 5 (B2)'],[6,'Niveau 6 (B2+)'],[7,'Niveau 7 (C1)']])}</label>
           <label>Sens ${sel('dir',[['vf','Vietnamien → français'],['fv','Français → vietnamien'],['audio','Écoute → français']])}</label>
           <label>Nouvelles cartes / jour ${sel('newPerDay',[[5,'5'],[10,'10'],[20,'20'],[30,'30']])}</label>
         </div>

@@ -1,6 +1,6 @@
 // Service worker for "Tiếng Việt Miền Nam" — bump CACHE_NAME on every deploy
 // that changes cached files, so old caches get cleared automatically.
-const CACHE_NAME = "tieng-viet-mien-nam-v14";
+const CACHE_NAME = "tieng-viet-mien-nam-v15";
 
 const APP_SHELL = [
   "./",
